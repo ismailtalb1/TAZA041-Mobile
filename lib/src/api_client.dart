@@ -1,0 +1,192 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+
+class ApiConfig {
+  ApiConfig._();
+
+  static const String _definedBase = String.fromEnvironment('TAZA_API_BASE');
+  static const String mapTileUrl = String.fromEnvironment(
+    'TAZA_MAP_TILE_URL',
+    defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  );
+
+  static String get baseUrl {
+    if (_definedBase.trim().isNotEmpty) {
+      return _definedBase.trim().replaceFirst(RegExp(r'/$'), '');
+    }
+    if (kIsWeb) {
+      final uri = Uri.base;
+      final isLocal = uri.host == 'localhost' || uri.host == '127.0.0.1';
+      if (isLocal && uri.port != 8000) return 'http://${uri.host}:8000/api';
+      return '${uri.origin}/api';
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8000/api';
+    }
+    return 'http://127.0.0.1:8000/api';
+  }
+
+  static String assetUrl(String? value) {
+    if (value == null || value.trim().isEmpty) return '';
+    final trimmed = value.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final apiUri = Uri.parse(baseUrl);
+    final origin = '${apiUri.scheme}://${apiUri.authority}';
+    return '$origin/${trimmed.replaceFirst(RegExp(r'^/+'), '')}';
+  }
+}
+
+class ApiException implements Exception {
+  const ApiException(this.message, {this.statusCode, this.errors});
+
+  final String message;
+  final int? statusCode;
+  final Map<String, dynamic>? errors;
+
+  bool get isUnauthorized => statusCode == 401 || statusCode == 403;
+
+  @override
+  String toString() => message;
+}
+
+class ApiClient {
+  ApiClient({http.Client? httpClient, FlutterSecureStorage? secureStorage})
+      : _http = httpClient ?? http.Client(),
+        _storage = secureStorage ?? const FlutterSecureStorage();
+
+  static const _tokenKey = 'taza_customer_token';
+  final http.Client _http;
+  final FlutterSecureStorage _storage;
+  String? _token;
+
+  String? get token => _token;
+  bool get hasToken => _token != null && _token!.isNotEmpty;
+
+  Future<void> restoreToken() async {
+    _token = await _storage.read(key: _tokenKey);
+  }
+
+  Future<void> saveToken(String value) async {
+    _token = value;
+    await _storage.write(key: _tokenKey, value: value);
+  }
+
+  Future<void> clearToken() async {
+    _token = null;
+    await _storage.delete(key: _tokenKey);
+  }
+
+  Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
+      request('GET', path, query: query);
+
+  Future<dynamic> post(String path, {Map<String, dynamic>? body}) =>
+      request('POST', path, body: body);
+
+  Future<dynamic> put(String path, {Map<String, dynamic>? body}) =>
+      request('PUT', path, body: body);
+
+  Future<dynamic> delete(String path) => request('DELETE', path);
+
+  Future<dynamic> request(
+    String method,
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? body,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}${_normalizePath(path)}')
+        .replace(
+            queryParameters:
+                query?.map((key, value) => MapEntry(key, '$value')));
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      if (body != null) 'Content-Type': 'application/json',
+      if (hasToken) 'Authorization': 'Bearer $_token',
+    };
+
+    try {
+      late http.Response response;
+      final encoded = body == null ? null : jsonEncode(body);
+      switch (method) {
+        case 'POST':
+          response = await _http
+              .post(uri, headers: headers, body: encoded)
+              .timeout(timeout);
+        case 'PUT':
+          response = await _http
+              .put(uri, headers: headers, body: encoded)
+              .timeout(timeout);
+        case 'DELETE':
+          response = await _http.delete(uri, headers: headers).timeout(timeout);
+        default:
+          response = await _http.get(uri, headers: headers).timeout(timeout);
+      }
+      return _decode(response);
+    } on TimeoutException {
+      throw const ApiException('انتهت مهلة الاتصال، حاول مرة أخرى.');
+    } on http.ClientException {
+      throw const ApiException(
+          'تعذر الاتصال بالخادم. تحقق من الإنترنت وعنوان الـ API.');
+    }
+  }
+
+  Future<dynamic> uploadImage(
+    String path, {
+    required List<int> bytes,
+    required String filename,
+    String? currentPassword,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ApiConfig.baseUrl}${_normalizePath(path)}'),
+    );
+    request.headers['Accept'] = 'application/json';
+    if (hasToken) request.headers['Authorization'] = 'Bearer $_token';
+    if (currentPassword?.isNotEmpty ?? false) {
+      request.fields['current_password'] = currentPassword!;
+    }
+    request.files
+        .add(http.MultipartFile.fromBytes('image', bytes, filename: filename));
+    try {
+      final streamed =
+          await _http.send(request).timeout(const Duration(seconds: 30));
+      return _decode(await http.Response.fromStream(streamed));
+    } on TimeoutException {
+      throw const ApiException(
+          'استغرق رفع الصورة وقتًا طويلًا. حاول مرة أخرى.');
+    } on http.ClientException {
+      throw const ApiException('تعذر رفع الصورة بسبب مشكلة في الاتصال.');
+    }
+  }
+
+  dynamic _decode(http.Response response) {
+    Map<String, dynamic>? payload;
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map<String, dynamic>) payload = decoded;
+    } on FormatException {
+      payload = null;
+    }
+    final success = response.statusCode >= 200 && response.statusCode < 300;
+    if (!success || payload?['success'] == false) {
+      final rawErrors = payload?['errors'];
+      throw ApiException(
+        payload?['message']?.toString() ??
+            'تعذر تنفيذ الطلب (${response.statusCode}).',
+        statusCode: response.statusCode,
+        errors: rawErrors is Map<String, dynamic> ? rawErrors : null,
+      );
+    }
+    return payload?.containsKey('data') == true ? payload!['data'] : payload;
+  }
+
+  String _normalizePath(String path) => path.startsWith('/') ? path : '/$path';
+
+  void dispose() => _http.close();
+}

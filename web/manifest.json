@@ -1,0 +1,35 @@
+{
+    "name": "TAZA 041 Customer",
+    "short_name": "TAZA 041",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0B0907",
+    "theme_color": "#FF8728",
+    "description": "تطبيق زبائن مطعم TAZA 041",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
