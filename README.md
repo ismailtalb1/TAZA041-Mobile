@@ -31,11 +31,37 @@ flutter pub get
 flutter run --dart-define=TAZA_API_BASE=http://10.0.2.2:8000/api
 ```
 
-العنوان أعلاه لمحاكي Android. استعمل عنوان IP لجهاز التطوير عند التشغيل على هاتف حقيقي. في نسخة المتجر يجب أن يكون العنوان HTTPS:
+العنوان أعلاه لمحاكي Android؛ إذ يشير `10.0.2.2` من داخل المحاكي إلى الحاسوب
+الذي يشغّل Laravel.
+
+### هاتف Android فعلي عبر USB
+
+بعد تفعيل USB debugging وتوصيل الهاتف، تحقق من ظهوره ثم حوّل منفذ Laravel:
+
+```bash
+adb devices
+adb reverse tcp:8000 tcp:8000
+adb reverse --list
+flutter run --dart-define=TAZA_API_BASE=http://127.0.0.1:8000/api
+```
+
+قاعدة `adb reverse` مؤقتة وقد يلزم تنفيذها مجددًا بعد فصل الهاتف أو إعادة تشغيله.
+يمكن بدلًا منها استخدام عنوان IP للحاسوب ضمن الشبكة المحلية. في نسخة المتجر يجب
+أن يكون عنوان API رابط HTTPS حقيقيًا:
 
 ```bash
 flutter run --dart-define=TAZA_API_BASE=https://example.com/api
 ```
+
+### المصدر الرسمي
+
+هذا المستودع المستقل في المسار التالي هو المصدر الوحيد المعتمد لتطبيق الهاتف:
+
+```text
+C:\Users\DELL005\Desktop\taza041_flutter_customer_mobile
+```
+
+لا تُنشأ أو تُعدّل نسخة من التطبيق داخل مستودع Laravel أو مجلد `public`.
 
 ## الفحص
 
