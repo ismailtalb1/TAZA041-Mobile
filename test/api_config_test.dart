@@ -26,4 +26,13 @@ void main() {
     const absolute = 'https://cdn.example.com/products/example.jpg';
     expect(ApiConfig.assetUrl(absolute), absolute);
   });
+
+  test('production endpoints must be remote HTTPS URLs', () {
+    expect(
+        ApiConfig.isValidProductionBase('https://api.taza041.com/api'), isTrue);
+    expect(
+        ApiConfig.isValidProductionBase('http://api.taza041.com/api'), isFalse);
+    expect(
+        ApiConfig.isValidProductionBase('https://localhost:8000/api'), isFalse);
+  });
 }

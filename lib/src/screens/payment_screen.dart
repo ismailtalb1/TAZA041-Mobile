@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_constants.dart';
+import '../core/app_messenger.dart';
 import '../models.dart';
 import '../router.dart';
 import '../theme.dart';
@@ -31,13 +33,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
     try {
       await state.completeOrder(_method);
       if (!mounted) return;
-      showMessage(
-          context,
-          tr(context,
-              ar: 'تم إنشاء الطلب وتأكيد طريقة الدفع بنجاح',
-              en: 'Order and payment method confirmed successfully'));
+      final successMessage = tr(context,
+          ar: 'تم إنشاء الطلب وتأكيد طريقة الدفع بنجاح',
+          en: 'Order and payment method confirmed successfully');
       Navigator.pushNamedAndRemoveUntil(
           context, AppRoutes.orders, (_) => false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        AppMessenger.show(successMessage);
+      });
     } catch (error) {
       if (mounted) showApiError(context, error);
     }
@@ -129,17 +132,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
-              final width = constraints.maxWidth < 380
-                  ? constraints.maxWidth
-                  : (constraints.maxWidth - 12) / 2;
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
+              return GridView.count(
+                crossAxisCount: constraints.maxWidth < 330 ? 1 : 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: constraints.maxWidth < 330 ? 1.25 : .68,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _PaymentCard(
-                    width: width,
                     selected: _method == PaymentMethod.cash,
-                    image: 'assets/images/payment-manual-cash.png',
+                    image: AppAssets.paymentCash,
                     title: tr(context, ar: 'الدفع النقدي', en: 'Cash payment'),
                     subtitle: tr(context,
                         ar: 'عند الاستلام أو في المطعم',
@@ -147,9 +150,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     onTap: () => setState(() => _method = PaymentMethod.cash),
                   ),
                   _PaymentCard(
-                    width: width,
                     selected: _method == PaymentMethod.loyaltyPoints,
-                    image: 'assets/images/payment-loyalty-points.png',
+                    image: AppAssets.paymentLoyalty,
                     title: tr(context, ar: 'نقاط الولاء', en: 'Loyalty points'),
                     subtitle: tr(context,
                         ar: 'الرصيد ${state.currentUser.loyaltyPoints} / المطلوب $needed',
@@ -158,10 +160,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         setState(() => _method = PaymentMethod.loyaltyPoints),
                   ),
                   _PaymentCard(
-                    width: width,
                     selected: false,
                     enabled: false,
-                    image: 'assets/images/payment-syriatel-cash.png',
+                    image: AppAssets.paymentSyriatel,
                     title: 'Syriatel Cash',
                     subtitle: tr(context,
                         ar: 'غير متاح حاليًا من الخادم',
@@ -169,10 +170,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     onTap: () {},
                   ),
                   _PaymentCard(
-                    width: width,
                     selected: false,
                     enabled: false,
-                    image: 'assets/images/payment-sham-cash.png',
+                    image: AppAssets.paymentSham,
                     title: 'Sham Cash',
                     subtitle: tr(context,
                         ar: 'غير متاح حاليًا من الخادم',
@@ -263,7 +263,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
 class _PaymentCard extends StatelessWidget {
   const _PaymentCard({
-    required this.width,
     required this.selected,
     required this.image,
     required this.title,
@@ -272,7 +271,6 @@ class _PaymentCard extends StatelessWidget {
     this.enabled = true,
   });
 
-  final double width;
   final bool selected;
   final bool enabled;
   final String image;
@@ -282,28 +280,124 @@ class _PaymentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: Opacity(
-        opacity: enabled ? 1 : .5,
-        child: TazaCard(
-          color: selected ? TazaColors.accent.withValues(alpha: .14) : null,
-          onTap: enabled ? onTap : null,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: AspectRatio(
-                  aspectRatio: 1.6,
-                  child: Image.asset(image, fit: BoxFit.cover),
+    final theme = Theme.of(context);
+    final borderColor = selected
+        ? TazaColors.accent
+        : theme.colorScheme.outlineVariant.withValues(alpha: .65);
+    return Semantics(
+      button: true,
+      selected: selected,
+      enabled: enabled,
+      label: '$title. $subtitle',
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 180),
+        opacity: enabled ? 1 : .58,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          decoration: BoxDecoration(
+            color: selected
+                ? TazaColors.accent.withValues(alpha: .1)
+                : theme.colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: borderColor, width: selected ? 1.8 : 1),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: TazaColors.accent.withValues(alpha: .13),
+                      blurRadius: 18,
+                      offset: const Offset(0, 7),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: enabled ? onTap : null,
+              borderRadius: BorderRadius.circular(22),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            enabled
+                                ? tr(context, ar: 'متاح', en: 'Available')
+                                : tr(context, ar: 'قريباً', en: 'Coming soon'),
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: enabled
+                                  ? TazaColors.success
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: Icon(
+                            selected
+                                ? Icons.check_circle_rounded
+                                : enabled
+                                    ? Icons.radio_button_unchecked_rounded
+                                    : Icons.lock_clock_outlined,
+                            key: ValueKey('$selected-$enabled'),
+                            size: 21,
+                            color: selected
+                                ? TazaColors.accent
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 92,
+                      height: 92,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: Colors.black.withValues(alpha: .06),
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(15),
+                        child: Image.asset(
+                          image,
+                          fit: BoxFit.contain,
+                          cacheWidth: 256,
+                          filterQuality: FilterQuality.medium,
+                          excludeFromSemantics: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 5),
+                    Expanded(
+                      child: Text(
+                        subtitle,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style:
+                            theme.textTheme.bodySmall?.copyWith(height: 1.35),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 10),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 5),
-              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-            ],
+            ),
           ),
         ),
       ),

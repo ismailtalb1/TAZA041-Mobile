@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taza041_flutter_customer_mobile/src/app_state.dart';
 import 'package:taza041_flutter_customer_mobile/src/models.dart';
@@ -6,7 +7,7 @@ import 'package:taza041_flutter_customer_mobile/src/screens.dart';
 import 'package:taza041_flutter_customer_mobile/src/widgets.dart';
 
 void main() {
-  for (final width in <double>[360, 390, 430]) {
+  for (final width in <double>[320, 360, 390, 430]) {
     testWidgets('guest home has no layout exception at ${width.toInt()}dp',
         (tester) async {
       tester.view.physicalSize = Size(width, 844);
@@ -70,9 +71,38 @@ void main() {
           ),
         );
         await tester.pump();
-        expect(tester.takeException(), isNull,
-            reason: '${screen.runtimeType} failed at ${width.toInt()}dp');
+        final exception = tester.takeException();
+        expect(
+          exception,
+          isNull,
+          reason: [
+            '${screen.runtimeType} failed at ${width.toInt()}dp',
+            if (exception is FlutterError) exception.toStringDeep(),
+            if (exception is FlutterError) _overflowReport(tester),
+          ].join('\n'),
+        );
       }
     });
   }
+}
+
+String _overflowReport(WidgetTester tester) {
+  final reports = <String>[];
+  for (final renderObject in tester.allRenderObjects.whereType<RenderFlex>()) {
+    var exceedsBounds = false;
+    renderObject.visitChildren((child) {
+      if (child is! RenderBox) return;
+      final parentData = child.parentData;
+      if (parentData is! FlexParentData) return;
+      final rect = parentData.offset & child.size;
+      if (rect.left < -.5 ||
+          rect.top < -.5 ||
+          rect.right > renderObject.size.width + .5 ||
+          rect.bottom > renderObject.size.height + .5) {
+        exceedsBounds = true;
+      }
+    });
+    if (exceedsBounds) reports.add(renderObject.toStringDeep());
+  }
+  return reports.join('\n');
 }

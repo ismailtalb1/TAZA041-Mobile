@@ -225,6 +225,32 @@ class _MenuScreenState extends State<MenuScreen> {
                                 }
                               },
                               onRemove: () => state.decreaseFromCart(product),
+                              unavailableReported:
+                                  product.referenceId != null &&
+                                      state.reportedUnavailableProductIds
+                                          .contains(product.referenceId),
+                              onReportUnavailable: !state.isAuthenticated ||
+                                      product.itemType !=
+                                          CatalogItemType.product ||
+                                      product.referenceId == null
+                                  ? null
+                                  : () async {
+                                      try {
+                                        await state.reportUnavailable(product);
+                                        if (context.mounted) {
+                                          showMessage(
+                                            context,
+                                            tr(context,
+                                                ar: 'تم إبلاغ مدير المخزون',
+                                                en: 'Inventory manager notified'),
+                                          );
+                                        }
+                                      } catch (error) {
+                                        if (context.mounted) {
+                                          showApiError(context, error);
+                                        }
+                                      }
+                                    },
                             );
                           },
                         ),

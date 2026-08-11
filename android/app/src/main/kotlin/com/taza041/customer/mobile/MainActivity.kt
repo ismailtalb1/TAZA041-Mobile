@@ -1,4 +1,4 @@
-package com.taza041.taza041_flutter_customer
+package com.taza041.customer.mobile
 
 import io.flutter.embedding.android.FlutterActivity
 

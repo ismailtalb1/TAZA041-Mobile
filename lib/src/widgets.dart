@@ -1,105 +1,15 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-import 'app_state.dart';
-import 'mock_data.dart';
+import 'core/app_constants.dart';
+import 'core/app_scope.dart';
+import 'core/localization.dart';
 import 'models.dart';
 import 'router.dart';
 import 'theme.dart';
 
-class AppStateScope extends InheritedNotifier<AppState> {
-  const AppStateScope(
-      {super.key, required super.notifier, required super.child});
-
-  static AppState of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<AppStateScope>();
-    assert(scope != null, 'AppStateScope not found in context');
-    return scope!.notifier!;
-  }
-}
-
-String tr(BuildContext context, {required String ar, required String en}) {
-  return AppStateScope.of(context).language == AppLanguage.ar ? ar : en;
-}
-
-bool isArabic(BuildContext context) =>
-    AppStateScope.of(context).language == AppLanguage.ar;
-
-String productName(BuildContext context, Product product) =>
-    isArabic(context) ? product.nameAr : product.nameEn;
-
-String productDescription(BuildContext context, Product product) =>
-    isArabic(context) ? product.descriptionAr : product.descriptionEn;
-
-String driverName(BuildContext context, DriverProfile driver) =>
-    isArabic(context) ? driver.nameAr : driver.nameEn;
-
-String driverDescription(BuildContext context, DriverProfile driver) =>
-    isArabic(context) ? driver.descriptionAr : driver.descriptionEn;
-
-String notificationTitle(BuildContext context, NotificationItem item) =>
-    isArabic(context) ? item.titleAr : item.titleEn;
-
-String notificationMessage(BuildContext context, NotificationItem item) =>
-    isArabic(context) ? item.messageAr : item.messageEn;
-
-String notificationTime(BuildContext context, NotificationItem item) =>
-    isArabic(context) ? item.timeLabelAr : item.timeLabelEn;
-
-String orderTypeLabel(BuildContext context, OrderType type) {
-  switch (type) {
-    case OrderType.ordinary:
-      return tr(context, ar: 'طلب عادي', en: 'Ordinary order');
-    case OrderType.delivery:
-      return tr(context, ar: 'طلب توصيل', en: 'Delivery order');
-    case OrderType.reservation:
-      return tr(context, ar: 'حجز طاولة', en: 'Table reservation');
-  }
-}
-
-String orderStatusLabel(BuildContext context, OrderStatus status) {
-  switch (status) {
-    case OrderStatus.pending:
-      return tr(context, ar: 'معلق', en: 'Pending');
-    case OrderStatus.inProgress:
-      return tr(context, ar: 'قيد التنفيذ', en: 'In progress');
-    case OrderStatus.confirmed:
-      return tr(context, ar: 'مؤكد', en: 'Confirmed');
-    case OrderStatus.completed:
-      return tr(context, ar: 'مكتمل', en: 'Completed');
-    case OrderStatus.cancelled:
-      return tr(context, ar: 'ملغي', en: 'Cancelled');
-  }
-}
-
-String paymentMethodLabel(BuildContext context, PaymentMethod method) {
-  switch (method) {
-    case PaymentMethod.cash:
-      return tr(context, ar: 'دفع نقدي', en: 'Cash');
-    case PaymentMethod.syriatelCash:
-      return 'Syriatel Cash';
-    case PaymentMethod.shamCash:
-      return 'Sham Cash';
-    case PaymentMethod.loyaltyPoints:
-      return tr(context, ar: 'نقاط الولاء', en: 'Loyalty points');
-  }
-}
-
-Color statusColor(OrderStatus status) {
-  switch (status) {
-    case OrderStatus.pending:
-      return TazaColors.warning;
-    case OrderStatus.inProgress:
-      return TazaColors.info;
-    case OrderStatus.confirmed:
-    case OrderStatus.completed:
-      return TazaColors.success;
-    case OrderStatus.cancelled:
-      return TazaColors.danger;
-  }
-}
-
-String formatCurrency(num amount) => '${amount.toStringAsFixed(0)} SYP';
+export 'core/app_scope.dart';
+export 'core/localization.dart';
+export 'ui/content_widgets.dart';
 
 class ScreenBackground extends StatelessWidget {
   const ScreenBackground({super.key, required this.child});
@@ -136,6 +46,7 @@ class TazaShell extends StatelessWidget {
     required this.body,
     this.registered = false,
     this.showBack = false,
+    this.startActions,
     this.actions,
     this.bottomContent,
     this.padding = const EdgeInsets.all(20),
@@ -146,6 +57,7 @@ class TazaShell extends StatelessWidget {
   final Widget body;
   final bool registered;
   final bool showBack;
+  final List<Widget>? startActions;
   final List<Widget>? actions;
   final Widget? bottomContent;
   final EdgeInsetsGeometry padding;
@@ -164,56 +76,26 @@ class TazaShell extends StatelessWidget {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         drawer: registered ? const TazaDrawer() : null,
-        appBar: AppBar(
-          toolbarHeight: 72,
-          leading: showBack
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                  onPressed: () => Navigator.maybePop(context),
-                )
-              : registered
-                  ? Builder(
-                      builder: (context) => IconButton(
-                        icon: const Icon(Icons.menu_rounded),
-                        onPressed: () => Scaffold.of(context).openDrawer(),
-                      ),
-                    )
-                  : null,
-          titleSpacing: 4,
-          title: _LogoTitle(compact: screenWidth < 410),
-          actions: [
-            if (registered && showBack)
-              Builder(
-                builder: (context) => IconButton(
-                  icon: const Icon(Icons.menu_rounded),
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                ),
-              ),
-            ...?actions,
-            IconButton(
-              tooltip: state.isDarkMode
-                  ? tr(context, ar: 'الوضع النهاري', en: 'Light mode')
-                  : tr(context, ar: 'الوضع الليلي', en: 'Dark mode'),
-              onPressed: state.toggleTheme,
-              icon: Icon(state.isDarkMode
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined),
-            ),
-            IconButton(
-              tooltip: tr(context, ar: 'تغيير اللغة', en: 'Change language'),
-              onPressed: state.toggleLanguage,
-              icon: Text(
-                state.language == AppLanguage.ar ? 'EN' : 'AR',
-                style:
-                    const TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
-              ),
-            ),
-          ],
+        appBar: _TazaAppBar(
+          registered: registered,
+          showBack: showBack,
+          startActions: startActions,
+          actions: actions,
+          subtitle: tr(context, ar: titleAr, en: titleEn),
         ),
         body: ScreenBackground(
           child: Padding(
             padding: adaptivePadding,
-            child: body,
+            child: Column(
+              children: [
+                if (state.usingFallback ||
+                    (!state.isOnline && state.lastError != null)) ...[
+                  const _ConnectionBanner(),
+                  const SizedBox(height: 10),
+                ],
+                Expanded(child: body),
+              ],
+            ),
           ),
         ),
         bottomNavigationBar: registered
@@ -230,14 +112,152 @@ class TazaShell extends StatelessWidget {
   }
 }
 
+class _TazaAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const _TazaAppBar({
+    required this.registered,
+    required this.showBack,
+    required this.subtitle,
+    this.startActions,
+    this.actions,
+  });
+
+  final bool registered;
+  final bool showBack;
+  final String subtitle;
+  final List<Widget>? startActions;
+  final List<Widget>? actions;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(72);
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    final leadingControls = <Widget>[
+      if (registered || showBack)
+        _ShellLeading(registered: registered, showBack: showBack),
+      ...?startActions,
+    ];
+    final trailingControls = <Widget>[
+      ...?actions,
+      IconButton(
+        key: const ValueKey('taza-theme-button'),
+        tooltip: state.isDarkMode
+            ? tr(context, ar: 'الوضع النهاري', en: 'Light mode')
+            : tr(context, ar: 'الوضع الليلي', en: 'Dark mode'),
+        onPressed: state.toggleTheme,
+        icon: Icon(state.isDarkMode
+            ? Icons.light_mode_outlined
+            : Icons.dark_mode_outlined),
+      ),
+      IconButton(
+        key: const ValueKey('taza-language-button'),
+        tooltip: tr(context, ar: 'تغيير اللغة', en: 'Change language'),
+        onPressed: state.toggleLanguage,
+        icon: Text(
+          state.language == AppLanguage.ar ? 'EN' : 'AR',
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+        ),
+      ),
+    ];
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: AlignmentDirectional.topStart,
+            end: AlignmentDirectional.bottomEnd,
+            colors: [
+              Theme.of(context).scaffoldBackgroundColor,
+              Theme.of(context).colorScheme.surface.withValues(alpha: .88),
+            ],
+          ),
+          border: Border(
+            bottom: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: SizedBox(
+            height: 72,
+            child: LayoutBuilder(
+              builder: (context, constraints) => Stack(
+                alignment: Alignment.center,
+                children: [
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: leadingControls,
+                    ),
+                  ),
+                  _LogoTitle(
+                    compact: trailingControls.length > 2 &&
+                        constraints.maxWidth < 380,
+                    subtitle: subtitle,
+                  ),
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: trailingControls,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShellLeading extends StatelessWidget {
+  const _ShellLeading({required this.registered, required this.showBack});
+
+  final bool registered;
+  final bool showBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Builder(
+      builder: (scaffoldContext) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (registered)
+            IconButton(
+              key: const ValueKey('taza-menu-button'),
+              tooltip: tr(context, ar: 'القائمة', en: 'Menu'),
+              icon: const Icon(Icons.menu_rounded),
+              onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
+            ),
+          if (showBack)
+            IconButton(
+              key: const ValueKey('taza-back-button'),
+              tooltip: tr(context, ar: 'رجوع', en: 'Back'),
+              icon: Icon(isArabic(context)
+                  ? Icons.arrow_forward_ios_rounded
+                  : Icons.arrow_back_ios_new_rounded),
+              onPressed: () => Navigator.maybePop(context),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LogoTitle extends StatelessWidget {
-  const _LogoTitle({required this.compact});
+  const _LogoTitle({required this.compact, required this.subtitle});
 
   final bool compact;
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      key: const ValueKey('taza-logo-title'),
       borderRadius: BorderRadius.circular(18),
       onTap: () {
         final state = AppStateScope.of(context);
@@ -256,35 +276,61 @@ class _LogoTitle extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: Image.asset(
-                'assets/images/taza041-logo.jpg',
+                AppAssets.logo,
                 fit: BoxFit.cover,
               ),
             ),
           ),
           if (!compact) ...[
             const SizedBox(width: 10),
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('TAZA 041', maxLines: 1),
-                  Text(
-                    tr(context, ar: 'تجربة العميل', en: 'Customer Experience'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: .65),
-                        ),
-                  ),
-                ],
-              ),
+            Text(
+              'TAZA 041',
+              maxLines: 1,
+              semanticsLabel: 'TAZA 041 · $subtitle',
+              style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ConnectionBanner extends StatelessWidget {
+  const _ConnectionBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+          color: TazaColors.warning.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: TazaColors.warning.withValues(alpha: .28),
+          ),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_outlined,
+                size: 19, color: TazaColors.warning),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                tr(context,
+                    ar: 'الاتصال غير مستقر؛ تُعرض آخر بيانات متاحة.',
+                    en: 'Connection is unstable; showing the latest available data.'),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -327,80 +373,6 @@ class UtilityBar extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class PlaceholderBox extends StatelessWidget {
-  const PlaceholderBox({
-    super.key,
-    required this.labelAr,
-    required this.labelEn,
-    this.height = 160,
-    this.compact = false,
-  });
-
-  final String labelAr;
-  final String labelEn;
-  final double height;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final isLogo =
-        labelAr.contains('لوجو') || labelEn.toLowerCase().contains('logo');
-    return Container(
-      height: compact ? null : height,
-      width: double.infinity,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(compact ? 14 : 24),
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: .55),
-        border: Border.all(
-            color: Theme.of(context).dividerColor, style: BorderStyle.solid),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: isLogo
-          ? Image.asset('assets/images/taza041-logo.jpg', fit: BoxFit.cover)
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                Opacity(
-                  opacity: .13,
-                  child: Image.asset('assets/images/taza041-logo.jpg',
-                      fit: BoxFit.cover),
-                ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        TazaColors.accent.withValues(alpha: .16),
-                        Theme.of(context)
-                            .colorScheme
-                            .surface
-                            .withValues(alpha: .78),
-                      ],
-                    ),
-                  ),
-                ),
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      tr(context, ar: labelAr, en: labelEn),
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: .72),
-                            fontWeight: FontWeight.w800,
-                          ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
     );
   }
 }
@@ -457,407 +429,6 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
-class TazaCard extends StatelessWidget {
-  const TazaCard(
-      {super.key,
-      required this.child,
-      this.padding = const EdgeInsets.all(18),
-      this.onTap,
-      this.color});
-
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-  final VoidCallback? onTap;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: color ?? Theme.of(context).cardColor.withValues(alpha: .92),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: Padding(
-          padding: padding,
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
-class HeroMessageCard extends StatelessWidget {
-  const HeroMessageCard({
-    super.key,
-    required this.titleAr,
-    required this.titleEn,
-    required this.bodyAr,
-    required this.bodyEn,
-    this.primary,
-    this.secondary,
-    this.visual,
-  });
-
-  final String titleAr;
-  final String titleEn;
-  final String bodyAr;
-  final String bodyEn;
-  final Widget? primary;
-  final Widget? secondary;
-  final Widget? visual;
-
-  @override
-  Widget build(BuildContext context) {
-    return TazaCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            tr(context, ar: titleAr, en: titleEn),
-            style: Theme.of(context)
-                .textTheme
-                .headlineMedium
-                ?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            tr(context, ar: bodyAr, en: bodyEn),
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: .72),
-                ),
-          ),
-          if (visual != null) ...[
-            const SizedBox(height: 18),
-            visual!,
-          ],
-          if (primary != null || secondary != null) ...[
-            const SizedBox(height: 18),
-            Wrap(spacing: 12, runSpacing: 12, children: [
-              if (primary != null) primary!,
-              if (secondary != null) secondary!
-            ]),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class OrderTypeActionCard extends StatelessWidget {
-  const OrderTypeActionCard(
-      {super.key,
-      required this.icon,
-      required this.titleAr,
-      required this.titleEn,
-      required this.bodyAr,
-      required this.bodyEn,
-      required this.onTap});
-
-  final IconData icon;
-  final String titleAr;
-  final String titleEn;
-  final String bodyAr;
-  final String bodyEn;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: (MediaQuery.sizeOf(context).width * .72).clamp(220.0, 280.0),
-      child: TazaCard(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-                radius: 24,
-                backgroundColor: TazaColors.accent.withValues(alpha: .18),
-                child: Icon(icon, color: TazaColors.accent)),
-            const SizedBox(height: 18),
-            Text(tr(context, ar: titleAr, en: titleEn),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text(
-              tr(context, ar: bodyAr, en: bodyEn),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: .65)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class ProductTile extends StatelessWidget {
-  const ProductTile({
-    super.key,
-    required this.product,
-    required this.quantity,
-    required this.onAdd,
-    required this.onRemove,
-    this.onOpenMenu,
-    this.highlighted = false,
-  });
-
-  final Product product;
-  final int quantity;
-  final VoidCallback onAdd;
-  final VoidCallback onRemove;
-  final VoidCallback? onOpenMenu;
-  final bool highlighted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: (MediaQuery.sizeOf(context).width * .76).clamp(250.0, 300.0),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color:
-              highlighted ? TazaColors.accent : Theme.of(context).dividerColor,
-          width: highlighted ? 1.6 : 1,
-        ),
-      ),
-      child: TazaCard(
-        padding: const EdgeInsets.all(14),
-        onTap: onOpenMenu,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TazaImage(
-              imageUrl: product.imageUrl,
-              labelAr: product.placeholderLabel ?? 'صورة المنتج',
-              labelEn: product.placeholderLabel ?? 'Product image',
-              height: 120,
-            ),
-            const SizedBox(height: 12),
-            Text(productName(context, product),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 6),
-            Text(
-              productDescription(context, product),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: .65)),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(Icons.star_rounded,
-                    color: TazaColors.warning, size: 18),
-                const SizedBox(width: 4),
-                Text(
-                    '${product.rating.toStringAsFixed(1)} (${product.ratingCount})'),
-              ],
-            ),
-            const Spacer(),
-            Row(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (product.oldPrice != null)
-                      Text(
-                        formatCurrency(product.oldPrice!),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              decoration: TextDecoration.lineThrough,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: .5),
-                            ),
-                      ),
-                    Text(formatCurrency(product.price),
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: TazaColors.accent)),
-                  ],
-                ),
-                const Spacer(),
-                if (quantity > 0)
-                  Row(
-                    children: [
-                      IconButton(
-                          onPressed: onRemove,
-                          icon:
-                              const Icon(Icons.remove_circle_outline_rounded)),
-                      Text('$quantity',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w800)),
-                      IconButton(
-                          onPressed: onAdd,
-                          icon: const Icon(Icons.add_circle_rounded,
-                              color: TazaColors.accent)),
-                    ],
-                  )
-                else
-                  ElevatedButton.icon(
-                    onPressed: product.isAvailable ? onAdd : null,
-                    icon: Icon(product.isAvailable
-                        ? Icons.add_rounded
-                        : Icons.block_rounded),
-                    label: Text(product.isAvailable
-                        ? tr(context, ar: 'أضف', en: 'Add')
-                        : tr(context, ar: 'غير متاح', en: 'Unavailable')),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class CartSummaryCard extends StatelessWidget {
-  const CartSummaryCard({
-    super.key,
-    required this.onCheckout,
-    this.extraLines = const <Widget>[],
-  });
-
-  final VoidCallback onCheckout;
-  final List<Widget> extraLines;
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        child: TazaCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(tr(context, ar: 'السلة', en: 'Cart'),
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                  const Spacer(),
-                  CircleAvatar(
-                      radius: 16,
-                      backgroundColor: TazaColors.accent.withValues(alpha: .2),
-                      child: Text('${state.cartCount}',
-                          style: const TextStyle(fontWeight: FontWeight.w800))),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (state.cartItems.isEmpty)
-                Text(tr(context,
-                    ar: 'لا توجد منتجات في السلة بعد.',
-                    en: 'No products in the cart yet.'))
-              else
-                Column(
-                  children: state.cartItems
-                      .map(
-                        (item) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                  child:
-                                      Text(productName(context, item.product))),
-                              Text('x${item.quantity}'),
-                              const SizedBox(width: 12),
-                              Text(formatCurrency(item.subtotal)),
-                              IconButton(
-                                onPressed: () =>
-                                    state.removeFromCart(item.product.id),
-                                icon: const Icon(Icons.delete_outline_rounded),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ...extraLines,
-              const Divider(),
-              Row(
-                children: [
-                  Text(tr(context, ar: 'الإجمالي', en: 'Total'),
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                  const Spacer(),
-                  Text(formatCurrency(state.orderGrandTotal),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: TazaColors.accent)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: state.cartItems.isEmpty ? null : onCheckout,
-                  child: Text(
-                      tr(context, ar: 'متابعة الطلب', en: 'Continue order')),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class StatusChip extends StatelessWidget {
-  const StatusChip({super.key, required this.status});
-
-  final OrderStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = statusColor(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: color.withValues(alpha: .16),
-      ),
-      child: Text(
-        orderStatusLabel(context, status),
-        style: Theme.of(context)
-            .textTheme
-            .labelMedium
-            ?.copyWith(color: color, fontWeight: FontWeight.w800),
-      ),
-    );
-  }
-}
-
 class TazaDrawer extends StatelessWidget {
   const TazaDrawer({super.key});
 
@@ -910,7 +481,15 @@ class TazaDrawer extends StatelessWidget {
             ),
             ...items.map(
               (item) => ListTile(
-                leading: Icon(item.icon),
+                leading: item.route == AppRoutes.notifications
+                    ? Badge(
+                        isLabelVisible: state.unreadNotifications > 0,
+                        label: Text(state.unreadNotifications > 99
+                            ? '99+'
+                            : '${state.unreadNotifications}'),
+                        child: Icon(item.icon),
+                      )
+                    : Icon(item.icon),
                 title: Text(tr(context, ar: item.labelAr, en: item.labelEn)),
                 onTap: () {
                   Navigator.pop(context);
@@ -997,151 +576,6 @@ class _MobileNavigation extends StatelessWidget {
           label: tr(context, ar: 'الحساب', en: 'Profile'),
         ),
       ],
-    );
-  }
-}
-
-class AboutPreviewCard extends StatelessWidget {
-  const AboutPreviewCard({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return TazaCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TazaImage(
-            imageUrl: _restaurantHeroUrl(state.restaurantImages),
-            labelAr: 'عن المطعم',
-            labelEn: 'About restaurant',
-            height: 160,
-          ),
-          const SizedBox(height: 14),
-          Text(
-              tr(
-                context,
-                ar: state.restaurant
-                    .content('story_title_ar', 'TAZA 041 أقرب إليك'),
-                en: state.restaurant
-                    .content('story_title_en', 'TAZA 041 closer to you'),
-              ),
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          Text(
-            tr(
-              context,
-              ar: state.restaurant.content(
-                'story_paragraph_one_ar',
-                state.restaurant.about.isNotEmpty
-                    ? state.restaurant.about
-                    : 'مطعم حديث يقدم وجبات سريعة وعصرية بجودة عالية مع خدمة توصيل سريعة تناسب طلاب الجامعة وسكان المدينة.',
-              ),
-              en: state.restaurant.content(
-                'story_paragraph_one_en',
-                state.restaurant.about.isNotEmpty
-                    ? state.restaurant.about
-                    : 'A modern restaurant serving high-quality fast meals with delivery designed for students and city residents.',
-              ),
-            ),
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: .65)),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _InfoPill(
-                  text: state.restaurant.address.isNotEmpty
-                      ? state.restaurant.address
-                      : tr(context,
-                          ar: restaurantAddressAr, en: restaurantAddressEn)),
-              _InfoPill(
-                  text: tr(context,
-                      ar: restaurantHoursAr, en: restaurantHoursEn)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          OutlinedButton(
-            onPressed: () => Navigator.pushNamed(context, AppRoutes.about),
-            child: Text(tr(context, ar: 'اعرف المزيد', en: 'Learn more')),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class TazaImage extends StatelessWidget {
-  const TazaImage({
-    super.key,
-    required this.imageUrl,
-    required this.labelAr,
-    required this.labelEn,
-    this.height = 160,
-    this.fit = BoxFit.cover,
-  });
-
-  final String? imageUrl;
-  final String labelAr;
-  final String labelEn;
-  final double height;
-  final BoxFit fit;
-
-  @override
-  Widget build(BuildContext context) {
-    final url = imageUrl?.trim() ?? '';
-    return SizedBox(
-      width: double.infinity,
-      height: height,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: url.isEmpty
-            ? PlaceholderBox(labelAr: labelAr, labelEn: labelEn, height: height)
-            : CachedNetworkImage(
-                imageUrl: url,
-                fit: fit,
-                fadeInDuration: const Duration(milliseconds: 220),
-                placeholder: (_, __) =>
-                    const Center(child: CircularProgressIndicator()),
-                errorWidget: (_, __, ___) => PlaceholderBox(
-                    labelAr: labelAr, labelEn: labelEn, height: height),
-              ),
-      ),
-    );
-  }
-}
-
-String? _restaurantHeroUrl(Map<String, dynamic> groups) {
-  for (final value in groups.values) {
-    if (value is List && value.isNotEmpty && value.first is Map) {
-      final item = Map<String, dynamic>.from(value.first as Map);
-      return (item['url'] ?? item['image_url'])?.toString();
-    }
-  }
-  return null;
-}
-
-class _InfoPill extends StatelessWidget {
-  const _InfoPill({required this.text});
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: .55),
-      ),
-      child: Text(text),
     );
   }
 }

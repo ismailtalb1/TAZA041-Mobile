@@ -159,6 +159,8 @@ class NotificationItem {
     required this.timeLabelAr,
     required this.timeLabelEn,
     required this.icon,
+    this.type = 'general',
+    this.data = const {},
     this.isRead = false,
   });
 
@@ -173,6 +175,10 @@ class NotificationItem {
       timeLabelAr: (json['created_at_human'] ?? '').toString(),
       timeLabelEn: (json['created_at_human'] ?? '').toString(),
       icon: _notificationIcon(type),
+      type: type,
+      data: json['data'] is Map
+          ? Map<String, dynamic>.from(json['data'] as Map)
+          : const {},
       isRead: _boolean(json['is_read']),
     );
   }
@@ -185,7 +191,23 @@ class NotificationItem {
   final String timeLabelAr;
   final String timeLabelEn;
   final IconData icon;
+  final String type;
+  final Map<String, dynamic> data;
   bool isRead;
+
+  bool get isOrderUpdate =>
+      type.contains('order') ||
+      type.contains('delivery') ||
+      type.contains('reservation') ||
+      type.contains('payment');
+  bool get isCatalogUpdate =>
+      type.contains('offer') ||
+      type.contains('meal') ||
+      type.contains('product');
+  String? get linkedOrderId =>
+      (data['order_id'] ?? data['delivery_order_id'])?.toString();
+  String? get linkedCatalogId =>
+      (data['offer_id'] ?? data['product_id'])?.toString();
 }
 
 IconData _notificationIcon(String type) {
@@ -282,6 +304,7 @@ class SavedAddress {
   const SavedAddress({
     required this.type,
     this.address = '',
+    this.details = '',
     this.latitude,
     this.longitude,
   });
@@ -292,6 +315,7 @@ class SavedAddress {
           orElse: () => SavedAddressType.other,
         ),
         address: (json['address'] ?? '').toString(),
+        details: (json['details'] ?? '').toString(),
         latitude: json['latitude'] == null ? null : _number(json['latitude']),
         longitude:
             json['longitude'] == null ? null : _number(json['longitude']),
@@ -299,15 +323,20 @@ class SavedAddress {
 
   final SavedAddressType type;
   final String address;
+  final String details;
   final double? latitude;
   final double? longitude;
 
   bool get hasAddress => address.trim().isNotEmpty;
   bool get isPinned => latitude != null && longitude != null;
+  String get displayAddress => [address.trim(), details.trim()]
+      .where((value) => value.isNotEmpty)
+      .join(' - ');
 
   Map<String, dynamic> toJson() => {
         'type': type.name,
         'address': address.trim(),
+        'details': details.trim(),
         'latitude': latitude,
         'longitude': longitude,
       };
@@ -324,21 +353,35 @@ class OrderRecord {
     required this.paymentMethod,
     required this.baseTotal,
     required this.finalTotal,
+    this.notes = '',
     this.discount = 0,
     this.deliveryAddress,
     this.deliveryId,
+    this.deliveryStatus,
     this.canRateDriver = false,
     this.deliveryDistanceMeters,
     this.deliveryCost = 0,
+    this.deliveryRouteGeometry = const [],
+    this.deliveryDurationMinutes,
+    this.deliveryRouteIsFallback = false,
     this.driver,
     this.tableNumber,
     this.isVipTable = false,
     this.seatsCount,
     this.reservationTimeLabel,
+    this.reservationStatus,
+    this.customerStatusKey = '',
+    this.customerStatusLabelAr = '',
+    this.customerStatusLabelEn = '',
+    this.timelineSteps = const [],
+    this.timelineIndex = 0,
+    this.customerStatusCancelled = false,
     this.loyaltyAwarded = 0,
+    this.canCancel = false,
   });
 
   factory OrderRecord.fromJson(Map<String, dynamic> json) {
+    final type = _orderType('${json['type']}');
     final rawItems = json['items'] is List ? json['items'] as List : const [];
     final delivery = json['delivery'] is Map<String, dynamic>
         ? json['delivery'] as Map<String, dynamic>
@@ -349,13 +392,28 @@ class OrderRecord {
     final driverJson = delivery?['driver'] is Map<String, dynamic>
         ? delivery!['driver'] as Map<String, dynamic>
         : null;
+    final route = delivery?['route'] is Map
+        ? Map<String, dynamic>.from(delivery!['route'] as Map)
+        : const <String, dynamic>{};
     final payment = json['payment'] is Map<String, dynamic>
         ? json['payment'] as Map<String, dynamic>
         : null;
+    final customerStatus = json['customer_status'] is Map
+        ? Map<String, dynamic>.from(json['customer_status'] as Map)
+        : const <String, dynamic>{};
+    final rawTimeline = customerStatus['steps'] is List
+        ? customerStatus['steps'] as List
+        : const [];
+    final fallbackStatus = _effectiveOrderStatus(
+      type,
+      '${json['status']}',
+      delivery?['status']?.toString(),
+      reservation?['status']?.toString(),
+    );
     return OrderRecord(
       id: '${json['id']}',
-      type: _orderType('${json['type']}'),
-      status: _orderStatus('${json['status']}'),
+      type: type,
+      status: _unifiedOrderStatus(customerStatus, fallbackStatus),
       items: rawItems.whereType<Map>().map((raw) {
         final item = Map<String, dynamic>.from(raw);
         final isOffer = item['item_type'] == 'offer';
@@ -382,15 +440,22 @@ class OrderRecord {
       paymentMethod: _paymentMethod(payment?['method']),
       baseTotal: _number(json['total_price']),
       finalTotal: _number(json['final_price']),
+      notes: (json['notes'] ?? '').toString(),
       discount: _number(json['discount']),
       deliveryAddress: delivery?['delivery_address']?.toString(),
       deliveryId: delivery == null ? null : _integer(delivery['id']),
+      deliveryStatus: delivery?['status']?.toString(),
       canRateDriver: delivery != null &&
           _boolean(delivery['can_be_rated']) &&
           delivery['driver_rating'] == null &&
           driverJson != null,
       deliveryDistanceMeters: _integer(delivery?['distance_meters']),
       deliveryCost: _number(delivery?['delivery_cost']),
+      deliveryRouteGeometry: _routeGeometry(route['geometry']),
+      deliveryDurationMinutes: route['duration_minutes'] == null
+          ? null
+          : _integer(route['duration_minutes']),
+      deliveryRouteIsFallback: _boolean(route['is_fallback']),
       driver: driverJson == null
           ? null
           : DriverProfile(
@@ -411,6 +476,18 @@ class OrderRecord {
       reservationTimeLabel:
           reservation?['reservation_time_formatted']?.toString() ??
               reservation?['reservation_time']?.toString(),
+      reservationStatus: reservation?['status']?.toString(),
+      customerStatusKey: (customerStatus['key'] ?? '').toString(),
+      customerStatusLabelAr: (customerStatus['label_ar'] ?? '').toString(),
+      customerStatusLabelEn: (customerStatus['label_en'] ?? '').toString(),
+      timelineSteps: rawTimeline
+          .whereType<Map>()
+          .map((step) =>
+              OrderTimelineStep.fromJson(Map<String, dynamic>.from(step)))
+          .toList(growable: false),
+      timelineIndex: _integer(customerStatus['current_index']),
+      customerStatusCancelled: _boolean(customerStatus['is_cancelled']),
+      canCancel: _orderStatus('${json['status']}') == OrderStatus.pending,
     );
   }
 
@@ -423,21 +500,100 @@ class OrderRecord {
   final PaymentMethod paymentMethod;
   final double baseTotal;
   final double finalTotal;
+  final String notes;
   final double discount;
   final String? deliveryAddress;
   final int? deliveryId;
+  final String? deliveryStatus;
   final bool canRateDriver;
   final int? deliveryDistanceMeters;
   final double deliveryCost;
+  final List<List<double>> deliveryRouteGeometry;
+  final int? deliveryDurationMinutes;
+  final bool deliveryRouteIsFallback;
   final DriverProfile? driver;
   final int? tableNumber;
   final bool isVipTable;
   final int? seatsCount;
   final String? reservationTimeLabel;
+  final String? reservationStatus;
+  final String customerStatusKey;
+  final String customerStatusLabelAr;
+  final String customerStatusLabelEn;
+  final List<OrderTimelineStep> timelineSteps;
+  final int timelineIndex;
+  final bool customerStatusCancelled;
   final int loyaltyAwarded;
-
-  bool get canCancel => status == OrderStatus.pending;
+  final bool canCancel;
   bool get canDelete => false;
+}
+
+class OrderTimelineStep {
+  const OrderTimelineStep({
+    required this.key,
+    required this.labelAr,
+    required this.labelEn,
+  });
+
+  factory OrderTimelineStep.fromJson(Map<String, dynamic> json) =>
+      OrderTimelineStep(
+        key: (json['key'] ?? '').toString(),
+        labelAr: (json['label_ar'] ?? json['label_en'] ?? '').toString(),
+        labelEn: (json['label_en'] ?? json['label_ar'] ?? '').toString(),
+      );
+
+  final String key;
+  final String labelAr;
+  final String labelEn;
+}
+
+class ReservationTable {
+  const ReservationTable({
+    required this.number,
+    required this.name,
+    required this.type,
+    required this.maxSeats,
+    required this.durationMinutes,
+    this.isAvailable,
+  });
+
+  factory ReservationTable.fromJson(Map<String, dynamic> json) =>
+      ReservationTable(
+        number: _integer(json['number']),
+        name: (json['name'] ?? 'T${json['number']}').toString(),
+        type: (json['type'] ?? 'normal').toString(),
+        maxSeats: _integer(json['max_seats'], 10),
+        durationMinutes: _integer(json['duration_minutes'], 60),
+        isAvailable: json['is_available'] == null
+            ? null
+            : _boolean(json['is_available']),
+      );
+
+  final int number;
+  final String name;
+  final String type;
+  final int maxSeats;
+  final int durationMinutes;
+  final bool? isAvailable;
+
+  bool get isVip => type == 'vip';
+}
+
+List<List<double>> _routeGeometry(dynamic raw) {
+  if (raw is! List) return const [];
+  return raw
+      .whereType<List>()
+      .map((point) {
+        if (point.length < 2 || point[0] is! num || point[1] is! num) {
+          return const <double>[];
+        }
+        return <double>[
+          (point[0] as num).toDouble(),
+          (point[1] as num).toDouble()
+        ];
+      })
+      .where((point) => point.length == 2)
+      .toList(growable: false);
 }
 
 OrderType _orderType(String raw) => switch (raw) {
@@ -453,6 +609,55 @@ OrderStatus _orderStatus(String raw) => switch (raw) {
       'cancelled' => OrderStatus.cancelled,
       _ => OrderStatus.pending,
     };
+
+OrderStatus _effectiveOrderStatus(
+  OrderType type,
+  String orderStatus,
+  String? deliveryStatus,
+  String? reservationStatus,
+) {
+  final subtype = switch (type) {
+    OrderType.delivery => deliveryStatus,
+    OrderType.reservation => reservationStatus,
+    OrderType.ordinary => null,
+  };
+  if (subtype == 'cancelled' || subtype == 'no_show') {
+    return OrderStatus.cancelled;
+  }
+  if ((type == OrderType.delivery && subtype == 'delivered') ||
+      (type == OrderType.reservation && subtype == 'completed')) {
+    return OrderStatus.completed;
+  }
+  if (type == OrderType.delivery &&
+      const ['pending', 'assigned', 'picked_up', 'in_delivery']
+          .contains(subtype)) {
+    return subtype == 'pending'
+        ? OrderStatus.confirmed
+        : OrderStatus.inProgress;
+  }
+  if (type == OrderType.reservation &&
+      const ['pending', 'confirmed', 'seated'].contains(subtype)) {
+    return subtype == 'pending' ? OrderStatus.pending : OrderStatus.inProgress;
+  }
+  return _orderStatus(orderStatus);
+}
+
+OrderStatus _unifiedOrderStatus(
+  Map<String, dynamic> customerStatus,
+  OrderStatus fallback,
+) {
+  final key = customerStatus['key']?.toString();
+  if (key == null || key.isEmpty) return fallback;
+  if (_boolean(customerStatus['is_cancelled']) || key == 'no_show') {
+    return OrderStatus.cancelled;
+  }
+  if (const ['completed', 'delivered', 'reservation_completed'].contains(key)) {
+    return OrderStatus.completed;
+  }
+  if (key == 'pending') return OrderStatus.pending;
+  if (key == 'confirmed') return OrderStatus.confirmed;
+  return OrderStatus.inProgress;
+}
 
 PaymentMethod _paymentMethod(dynamic raw) => switch ('$raw') {
       'syriatel_cash' => PaymentMethod.syriatelCash,
@@ -473,6 +678,7 @@ class RestaurantProfile {
     this.isOpen = true,
     this.latitude,
     this.longitude,
+    this.todayHours = const {},
     this.websiteContent = const {},
   });
 
@@ -489,6 +695,9 @@ class RestaurantProfile {
         latitude: json['latitude'] == null ? null : _number(json['latitude']),
         longitude:
             json['longitude'] == null ? null : _number(json['longitude']),
+        todayHours: json['today_hours'] is Map
+            ? Map<String, dynamic>.from(json['today_hours'] as Map)
+            : const {},
         websiteContent: json['website_content'] is Map
             ? Map<String, dynamic>.from(json['website_content'] as Map)
             : const {},
@@ -504,7 +713,17 @@ class RestaurantProfile {
   final bool isOpen;
   final double? latitude;
   final double? longitude;
+  final Map<String, dynamic> todayHours;
   final Map<String, dynamic> websiteContent;
+
+  String todayHoursLabel({required String closedLabel}) {
+    if (todayHours.isEmpty) return '';
+    if (_boolean(todayHours['is_closed'])) return closedLabel;
+    final open = todayHours['open']?.toString().trim() ?? '';
+    final close = todayHours['close']?.toString().trim() ?? '';
+    if (open.isEmpty || close.isEmpty) return '';
+    return '$open – $close';
+  }
 
   String content(String key, String fallback) {
     final value = websiteContent[key]?.toString().trim() ?? '';

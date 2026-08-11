@@ -1,15 +1,35 @@
 import 'package:flutter/material.dart';
 
+import '../models.dart';
+import '../router.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'screen_common.dart';
 
-class NotificationsScreen extends StatelessWidget {
+enum _NotificationFilter { all, unread, orders, catalog }
+
+class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  _NotificationFilter _filter = _NotificationFilter.all;
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
+    final items = state.notifications
+        .where((item) => switch (_filter) {
+              _NotificationFilter.all => true,
+              _NotificationFilter.unread => !item.isRead,
+              _NotificationFilter.orders => item.isOrderUpdate,
+              _NotificationFilter.catalog => item.isCatalogUpdate,
+            })
+        .toList(growable: false);
+
     return TazaShell(
       titleAr: 'الإشعارات',
       titleEn: 'Notifications',
@@ -32,80 +52,141 @@ class NotificationsScreen extends StatelessWidget {
       ],
       body: RefreshIndicator(
         onRefresh: () => state.refreshCustomerData(),
-        child: state.notifications.isEmpty
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  EmptyStateCard(
-                    icon: Icons.notifications_none_rounded,
-                    titleAr: 'لا توجد إشعارات',
-                    titleEn: 'No notifications',
-                    bodyAr: 'ستظهر هنا تحديثات الطلبات والعروض والدفع.',
-                    bodyEn:
-                        'Order, offer, and payment updates will appear here.',
-                  ),
-                ],
-              )
-            : ListView.separated(
-                physics: const AlwaysScrollableScrollPhysics(),
-                itemCount: state.notifications.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  final item = state.notifications[index];
-                  return TazaCard(
-                    color: item.isRead
-                        ? null
-                        : TazaColors.info.withValues(alpha: .10),
-                    onTap: () async {
-                      try {
-                        await state.markNotificationRead(item.id);
-                      } catch (error) {
-                        if (context.mounted) showApiError(context, error);
-                      }
-                    },
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          backgroundColor:
-                              TazaColors.accent.withValues(alpha: .15),
-                          child: Icon(item.icon, color: TazaColors.accent),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      notificationTitle(context, item),
-                                      style: TextStyle(
-                                        fontWeight: item.isRead
-                                            ? FontWeight.w700
-                                            : FontWeight.w900,
-                                      ),
-                                    ),
-                                  ),
-                                  if (!item.isRead)
-                                    const Icon(Icons.circle,
-                                        size: 10, color: TazaColors.info),
-                                ],
-                              ),
-                              const SizedBox(height: 5),
-                              Text(notificationMessage(context, item)),
-                              const SizedBox(height: 6),
-                              Text(notificationTime(context, item),
-                                  style: Theme.of(context).textTheme.bodySmall),
-                            ],
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _NotificationFilter.values
+                    .map((filter) => Padding(
+                          padding: const EdgeInsetsDirectional.only(end: 8),
+                          child: ChoiceChip(
+                            selected: _filter == filter,
+                            onSelected: (_) => setState(() => _filter = filter),
+                            label: Text(_filterLabel(context, filter)),
                           ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                        ))
+                    .toList(growable: false),
               ),
+            ),
+            const SizedBox(height: 14),
+            if (items.isEmpty)
+              EmptyStateCard(
+                icon: Icons.notifications_none_rounded,
+                titleAr: _filter == _NotificationFilter.all
+                    ? 'لا توجد إشعارات'
+                    : 'لا توجد نتائج ضمن هذا الفلتر',
+                titleEn: _filter == _NotificationFilter.all
+                    ? 'No notifications'
+                    : 'No notifications in this filter',
+                bodyAr: 'ستظهر هنا تحديثات الطلبات والعروض والدفع.',
+                bodyEn: 'Order, offer, and payment updates will appear here.',
+              )
+            else
+              ...items.map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _NotificationCard(
+                      item: item,
+                      onTap: () => _openNotification(context, item),
+                    ),
+                  )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _filterLabel(BuildContext context, _NotificationFilter filter) =>
+      switch (filter) {
+        _NotificationFilter.all => tr(context, ar: 'الكل', en: 'All'),
+        _NotificationFilter.unread =>
+          tr(context, ar: 'غير المقروء', en: 'Unread'),
+        _NotificationFilter.orders => tr(context, ar: 'الطلبات', en: 'Orders'),
+        _NotificationFilter.catalog =>
+          tr(context, ar: 'العروض والمنيو', en: 'Offers & menu'),
+      };
+
+  Future<void> _openNotification(
+      BuildContext context, NotificationItem item) async {
+    final state = AppStateScope.of(context);
+    try {
+      await state.markNotificationRead(item.id);
+      if (!context.mounted) return;
+      if (item.isOrderUpdate || item.linkedOrderId != null) {
+        await Navigator.pushNamed(context, AppRoutes.orders);
+      } else if (item.isCatalogUpdate || item.linkedCatalogId != null) {
+        await Navigator.pushNamed(
+          context,
+          AppRoutes.menu,
+          arguments: MenuRouteArgs(
+            orderType: OrderType.ordinary,
+            highlightProductId: item.linkedCatalogId,
+          ),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) showApiError(context, error);
+    }
+  }
+}
+
+class _NotificationCard extends StatelessWidget {
+  const _NotificationCard({required this.item, required this.onTap});
+
+  final NotificationItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return TazaCard(
+      color: item.isRead ? null : TazaColors.info.withValues(alpha: .10),
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            backgroundColor: TazaColors.accent.withValues(alpha: .15),
+            child: Icon(item.icon, color: TazaColors.accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        notificationTitle(context, item),
+                        style: TextStyle(
+                          fontWeight:
+                              item.isRead ? FontWeight.w700 : FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (!item.isRead)
+                      const Icon(Icons.circle,
+                          size: 10, color: TazaColors.info),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text(notificationMessage(context, item)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(notificationTime(context, item),
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ),
+                    if (item.isOrderUpdate || item.isCatalogUpdate)
+                      const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

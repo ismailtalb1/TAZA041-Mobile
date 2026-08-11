@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../api_client.dart';
+import '../core/app_constants.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../router.dart';
@@ -22,6 +23,9 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
   final _mapController = MapController();
   final _address = TextEditingController();
   LatLng? _selected;
+  List<LatLng> _routePoints = const [];
+  bool _routeIsFallback = false;
+  int? _routeDurationMinutes;
   bool _quoting = false;
 
   @override
@@ -37,6 +41,12 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
         state.selectedDeliveryLongitude!,
       );
     }
+    if (_routePoints.isEmpty &&
+        state.selectedDeliveryRouteGeometry.isNotEmpty) {
+      _routePoints = _routePointsFrom(state.selectedDeliveryRouteGeometry);
+      _routeIsFallback = state.selectedDeliveryRouteIsFallback;
+      _routeDurationMinutes = state.selectedDeliveryDurationMinutes;
+    }
   }
 
   @override
@@ -51,6 +61,7 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
       );
 
   Future<void> _useMyLocation() async {
+    final state = AppStateScope.of(context);
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
         throw const ApiException('فعّل خدمة الموقع ثم حاول مجددًا.');
@@ -65,7 +76,13 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
       }
       final position = await Geolocator.getCurrentPosition();
       final point = LatLng(position.latitude, position.longitude);
-      setState(() => _selected = point);
+      state.clearConfirmedDeliveryLocation();
+      setState(() {
+        _selected = point;
+        _routePoints = const [];
+        _routeDurationMinutes = null;
+        _routeIsFallback = false;
+      });
       _mapController.move(point, 16);
     } catch (error) {
       if (mounted) showApiError(context, error);
@@ -89,6 +106,10 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
         latitude: point.latitude,
         longitude: point.longitude,
       );
+      final route = quote['route'] is Map
+          ? Map<String, dynamic>.from(quote['route'] as Map)
+          : <String, dynamic>{};
+      final routeGeometry = _routeGeometryFrom(route['geometry']);
       state.confirmDeliveryLocation(
         addressAr: _address.text.trim(),
         addressEn: _address.text.trim(),
@@ -96,13 +117,27 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
         latitude: point.latitude,
         longitude: point.longitude,
         quotedCost: (quote['delivery_cost'] as num?)?.toDouble() ?? 0,
+        routeGeometry: routeGeometry,
+        durationMinutes: (route['duration_minutes'] as num?)?.toInt(),
+        routeIsFallback: route['is_fallback'] == true,
       );
+      setState(() {
+        _routePoints = _routePointsFrom(routeGeometry);
+        _routeDurationMinutes = (route['duration_minutes'] as num?)?.toInt();
+        _routeIsFallback = route['is_fallback'] == true;
+      });
       if (mounted) {
         showMessage(
             context,
-            tr(context,
-                ar: 'تم حفظ الموقع وحساب أجور التوصيل',
-                en: 'Location saved and delivery fee calculated'));
+            _routeIsFallback
+                ? tr(context,
+                    ar:
+                        'تعذّر الوصول إلى خدمة الطرق؛ استُخدم تقدير احتياطي واضح.',
+                    en:
+                        'Road routing is unavailable; a clearly marked fallback estimate was used.')
+                : tr(context,
+                    ar: 'تم حفظ الموقع ورسم الطريق وحساب أجور التوصيل',
+                    en: 'Location, road route, and delivery fee confirmed'));
       }
     } catch (error) {
       if (mounted) showApiError(context, error);
@@ -112,7 +147,7 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
   }
 
   Future<void> _applySavedAddress(SavedAddress address) async {
-    _address.text = address.address;
+    _address.text = address.displayAddress;
     if (!address.isPinned) {
       showMessage(
         context,
@@ -134,6 +169,10 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
         latitude: point.latitude,
         longitude: point.longitude,
       );
+      final route = quote['route'] is Map
+          ? Map<String, dynamic>.from(quote['route'] as Map)
+          : <String, dynamic>{};
+      final routeGeometry = _routeGeometryFrom(route['geometry']);
       state.confirmDeliveryLocation(
         addressAr: address.address,
         addressEn: address.address,
@@ -141,7 +180,15 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
         latitude: point.latitude,
         longitude: point.longitude,
         quotedCost: (quote['delivery_cost'] as num?)?.toDouble() ?? 0,
+        routeGeometry: routeGeometry,
+        durationMinutes: (route['duration_minutes'] as num?)?.toInt(),
+        routeIsFallback: route['is_fallback'] == true,
       );
+      setState(() {
+        _routePoints = _routePointsFrom(routeGeometry);
+        _routeDurationMinutes = (route['duration_minutes'] as num?)?.toInt();
+        _routeIsFallback = route['is_fallback'] == true;
+      });
     } catch (error) {
       if (mounted) showApiError(context, error);
     } finally {
@@ -220,21 +267,40 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
                 options: MapOptions(
                   initialCenter: _selected ?? center,
                   initialZoom: 13,
-                  onTap: (_, point) => setState(() => _selected = point),
+                  onTap: (_, point) {
+                    state.clearConfirmedDeliveryLocation();
+                    setState(() {
+                      _selected = point;
+                      _routePoints = const [];
+                      _routeDurationMinutes = null;
+                      _routeIsFallback = false;
+                    });
+                  },
                 ),
                 children: [
                   TileLayer(
                     urlTemplate: ApiConfig.mapTileUrl,
-                    userAgentPackageName:
-                        'com.taza041.taza041_flutter_customer.mobile',
+                    userAgentPackageName: AppConstants.mapUserAgent,
                   ),
+                  if (_routePoints.length > 1)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: _routePoints,
+                          strokeWidth: 6,
+                          color: _routeIsFallback
+                              ? TazaColors.accent
+                              : TazaColors.info,
+                        ),
+                      ],
+                    ),
                   MarkerLayer(markers: [
                     Marker(
                       point: center,
                       width: 48,
                       height: 48,
                       child: const Icon(Icons.restaurant_rounded,
-                          size: 38, color: TazaColors.accent),
+                          size: 38, color: TazaColors.danger),
                     ),
                     if (_selected != null)
                       Marker(
@@ -294,12 +360,66 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
           ),
           const SizedBox(height: 18),
           _DeliverySummary(state: state),
+          if (_routeDurationMinutes != null) ...[
+            const SizedBox(height: 10),
+            TazaCard(
+              child: Row(
+                children: [
+                  Icon(
+                    _routeIsFallback
+                        ? Icons.warning_amber_rounded
+                        : Icons.route_rounded,
+                    color: _routeIsFallback
+                        ? TazaColors.accent
+                        : TazaColors.success,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _routeIsFallback
+                          ? tr(context,
+                              ar: 'المسار تقدير احتياطي مؤقت',
+                              en: 'Temporary fallback route estimate')
+                          : tr(context,
+                              ar: 'مسار طرق فعلي معتمد',
+                              en: 'Confirmed road route'),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Text(
+                      '${_routeDurationMinutes!} ${tr(context, ar: 'د', en: 'min')}'),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 18),
         ],
       ),
     );
   }
 }
+
+List<List<double>> _routeGeometryFrom(dynamic raw) {
+  if (raw is! List) return const [];
+  return raw
+      .whereType<List>()
+      .map((point) {
+        if (point.length < 2 || point[0] is! num || point[1] is! num) {
+          return const <double>[];
+        }
+        return <double>[
+          (point[0] as num).toDouble(),
+          (point[1] as num).toDouble()
+        ];
+      })
+      .where((point) => point.length == 2)
+      .toList(growable: false);
+}
+
+List<LatLng> _routePointsFrom(List<List<double>> geometry) => geometry
+    .where((point) => point.length >= 2)
+    .map((point) => LatLng(point[1], point[0]))
+    .toList(growable: false);
 
 class _SavedAddressPicker extends StatelessWidget {
   const _SavedAddressPicker({

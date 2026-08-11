@@ -23,7 +23,7 @@ class GuestHomeScreen extends StatelessWidget {
     return TazaShell(
       titleAr: 'الرئيسية',
       titleEn: 'Home',
-      actions: [
+      startActions: [
         IconButton(
           tooltip: tr(context, ar: 'تسجيل الدخول', en: 'Log in'),
           onPressed: () => Navigator.pushNamed(context, AppRoutes.login),
@@ -76,24 +76,6 @@ class GuestHomeScreen extends StatelessWidget {
                     Text(tr(context, ar: 'عن المطعم', en: 'About restaurant')),
               ),
             ),
-            if (state.usingFallback) ...[
-              const SizedBox(height: 12),
-              TazaCard(
-                color: TazaColors.warning.withValues(alpha: .12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_off_outlined,
-                        color: TazaColors.warning),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(tr(context,
-                          ar: 'تعذر الاتصال بالخادم. تُعرض بيانات معاينة غير قابلة للطلب.',
-                          en: 'The server is unavailable. Preview-only items are shown.')),
-                    ),
-                  ],
-                ),
-              ),
-            ],
             const SizedBox(height: 16),
             const _JourneyStep(
               number: '01',

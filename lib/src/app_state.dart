@@ -1,23 +1,25 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
-import 'mock_data.dart';
+import 'core/app_storage.dart';
 import 'models.dart';
+import 'sync_coordinator.dart';
 
 class AppState extends ChangeNotifier {
-  AppState({ApiClient? apiClient}) : api = apiClient ?? ApiClient();
-
-  static const _languageKey = 'taza_language';
-  static const _themeKey = 'taza_theme_dark';
-  static const _cartKey = 'taza_cart';
-  static const _pendingOrderKey = 'taza_pending_order_id';
-  static const _savedAddressesKey = 'taza_saved_addresses';
+  AppState({ApiClient? apiClient, AppStorage? storage})
+      : api = apiClient ?? ApiClient(),
+        _storage = storage ?? AppStorage() {
+    _sync = SyncCoordinator(onSync: _syncLiveData);
+  }
 
   final ApiClient api;
-  SharedPreferences? _preferences;
+  final AppStorage _storage;
+  late final SyncCoordinator _sync;
+  final StreamController<NotificationItem> _notificationEvents =
+      StreamController<NotificationItem>.broadcast();
 
   AppLanguage language = AppLanguage.ar;
   bool isDarkMode = true;
@@ -42,6 +44,7 @@ class AppState extends ChangeNotifier {
   final List<OrderRecord> orders = [];
   final Map<String, CartItem> _cart = <String, CartItem>{};
   final List<Product> productsCatalog = [];
+  final List<ReservationTable> reservationTables = [];
   final List<SavedAddress> savedAddresses = SavedAddressType.values
       .map((type) => SavedAddress(type: type))
       .toList(growable: false);
@@ -57,6 +60,9 @@ class AppState extends ChangeNotifier {
   double? selectedDeliveryLatitude;
   double? selectedDeliveryLongitude;
   double deliveryCost = 0;
+  List<List<double>> selectedDeliveryRouteGeometry = const [];
+  int? selectedDeliveryDurationMinutes;
+  bool selectedDeliveryRouteIsFallback = false;
 
   int? selectedTableNumber;
   bool selectedTableIsVip = false;
@@ -67,6 +73,14 @@ class AppState extends ChangeNotifier {
   double reservationExtra = 0;
   int? aiConversationId;
   String? _pendingOrderId;
+  bool _ordersRefreshInFlight = false;
+  bool _notificationsRefreshInFlight = false;
+  bool _savedAddressesRefreshInFlight = false;
+  bool _notificationBaselineReady = false;
+  int _busyOperations = 0;
+  String? _publicRevision;
+  final Set<int> reportedUnavailableProductIds = {};
+  bool hasPendingSavedAddressMigration = false;
 
   List<CartItem> get cartItems => _cart.values.toList(growable: false);
   int get cartCount => _cart.values.fold(0, (sum, item) => sum + item.quantity);
@@ -76,30 +90,131 @@ class AppState extends ChangeNotifier {
   double get orderGrandTotal => cartSubtotal + extrasTotal;
   int get unreadNotifications =>
       notifications.where((item) => !item.isRead).length;
+  Stream<NotificationItem> get notificationEvents => _notificationEvents.stream;
 
   Future<void> initialize() async {
     try {
-      _preferences = await SharedPreferences.getInstance();
-      language = (_preferences?.getString(_languageKey) ?? 'ar') == 'en'
-          ? AppLanguage.en
-          : AppLanguage.ar;
-      isDarkMode = _preferences?.getBool(_themeKey) ?? true;
-      _pendingOrderId = _preferences?.getString(_pendingOrderKey);
-      _restoreSavedAddresses();
+      await _storage.initialize();
+      language =
+          _storage.languageCode == 'en' ? AppLanguage.en : AppLanguage.ar;
+      isDarkMode = _storage.isDarkMode;
+      _pendingOrderId = _storage.pendingOrderId;
+      await _restoreSavedAddresses();
+      await _restorePublicCache();
       await api.restoreToken();
       await loadPublicData(silent: true);
       _restoreCart();
       if (api.hasToken) {
         try {
-          await refreshCustomerData(silent: true);
+          await refreshCustomerData(
+            silent: true,
+            announceNotifications: false,
+          );
           isAuthenticated = true;
         } on ApiException catch (error) {
           if (error.isUnauthorized) await _clearSession();
         }
       }
+    } catch (error) {
+      isOnline = false;
+      usingFallback = true;
+      lastError = error is ApiException
+          ? error.message
+          : 'تعذر تهيئة بعض بيانات التطبيق. يمكنك المحاولة مجددًا.';
     } finally {
       isInitializing = false;
+      _sync.start();
       notifyListeners();
+    }
+  }
+
+  void setForeground(bool value) => _sync.setForeground(value);
+
+  Future<void> _syncLiveData() async {
+    await refreshPublicDataLive();
+    if (!isAuthenticated) return;
+    await Future.wait([
+      refreshOrdersLive(),
+      refreshNotificationsLive(),
+      refreshSavedAddressesLive(),
+    ]);
+  }
+
+  Future<void> refreshPublicDataLive() async {
+    try {
+      final data = _map(await api.get('/public/live-data', query: {
+        if (_publicRevision != null) 'since': _publicRevision,
+      }));
+      _publicRevision = data['revision']?.toString() ?? _publicRevision;
+      if (data['changed'] != true) return;
+      restaurant = RestaurantProfile.fromJson(_map(data['restaurant']));
+      restaurantImages = _map(data['images']);
+      pricing = _map(data['pricing']);
+      _replaceCatalog(data['products'], data['offers']);
+      await _storage.writePublicSnapshot(jsonEncode(data));
+      isOnline = true;
+      usingFallback = false;
+      lastError = null;
+      notifyListeners();
+    } on ApiException catch (error) {
+      isOnline = false;
+      lastError = error.message;
+    }
+  }
+
+  void _replaceCatalog(dynamic productList, dynamic offerList,
+      {bool reconcileCart = true}) {
+    final catalog = <Product>[
+      if (productList is List)
+        ...productList.whereType<Map>().map(
+              (item) =>
+                  Product.fromProductJson(Map<String, dynamic>.from(item)),
+            ),
+      if (offerList is List)
+        ...offerList.whereType<Map>().map(
+              (item) => Product.fromOfferJson(Map<String, dynamic>.from(item)),
+            ),
+    ];
+    productsCatalog
+      ..clear()
+      ..addAll(catalog);
+    if (reconcileCart) _reconcileCartWithCatalog();
+  }
+
+  void _reconcileCartWithCatalog() {
+    final previous = cartItems.toList(growable: false);
+    _cart.clear();
+    for (final item in previous) {
+      final current = productsCatalog
+          .where((product) =>
+              product.id == item.product.id &&
+              product.itemType == item.product.itemType &&
+              product.isAvailable)
+          .firstOrNull;
+      if (current == null) continue;
+      final quantity = item.quantity.clamp(1, current.maxQuantity);
+      _cart['${current.itemType.name}:${current.id}'] = CartItem(
+        product: current,
+        quantity: quantity,
+        note: item.note,
+      );
+    }
+    _saveCart();
+  }
+
+  Future<void> _restorePublicCache() async {
+    final raw = _storage.publicSnapshot;
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final data = _map(jsonDecode(raw));
+      restaurant = RestaurantProfile.fromJson(_map(data['restaurant']));
+      restaurantImages = _map(data['images']);
+      pricing = _map(data['pricing']);
+      _replaceCatalog(data['products'], data['offers'], reconcileCart: false);
+      _publicRevision = data['revision']?.toString();
+      usingFallback = true;
+    } catch (_) {
+      await _storage.clearPublicSnapshot();
     }
   }
 
@@ -120,14 +235,17 @@ class AppState extends ChangeNotifier {
       pricing = _map(responses[4]);
 
       final catalog = <Product>[];
+      final rawProducts = <Map<String, dynamic>>[];
       final grouped = _map(_map(responses[2])['grouped']);
       for (final group in grouped.values) {
         final products = _map(group)['products'];
         if (products is List) {
-          catalog.addAll(products.whereType<Map>().map(
-                (item) =>
-                    Product.fromProductJson(Map<String, dynamic>.from(item)),
-              ));
+          final items = products
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false);
+          rawProducts.addAll(items);
+          catalog.addAll(items.map(Product.fromProductJson));
         }
       }
       final rawOffers = _map(responses[3])['offers'];
@@ -139,6 +257,15 @@ class AppState extends ChangeNotifier {
       productsCatalog
         ..clear()
         ..addAll(catalog);
+      await _storage.writePublicSnapshot(
+        jsonEncode({
+          'restaurant': restaurantData['restaurant'],
+          'images': restaurantImages,
+          'products': rawProducts,
+          'offers': rawOffers is List ? rawOffers : const [],
+          'pricing': pricing,
+        }),
+      );
       isOnline = true;
       usingFallback = false;
       lastError = null;
@@ -146,43 +273,21 @@ class AppState extends ChangeNotifier {
       isOnline = false;
       usingFallback = true;
       lastError = error.message;
-      if (productsCatalog.isEmpty) {
-        productsCatalog.addAll(products.map(_disabledFallback));
-      }
       if (!silent) rethrow;
     } finally {
       if (!silent) _setBusy(false);
     }
   }
 
-  Product _disabledFallback(Product product) => Product(
-        id: product.id,
-        nameAr: product.nameAr,
-        nameEn: product.nameEn,
-        descriptionAr: product.descriptionAr,
-        descriptionEn: product.descriptionEn,
-        category: product.category,
-        price: product.price,
-        rating: product.rating,
-        ratingCount: product.ratingCount,
-        oldPrice: product.oldPrice,
-        isFeatured: product.isFeatured,
-        placeholderLabel: product.placeholderLabel,
-        isAvailable: false,
-        itemType: product.category == ProductCategory.offer
-            ? CatalogItemType.offer
-            : CatalogItemType.product,
-      );
-
   void toggleLanguage() {
     language = language == AppLanguage.ar ? AppLanguage.en : AppLanguage.ar;
-    _preferences?.setString(_languageKey, language.code);
+    unawaited(_storage.writeLanguage(language.code));
     notifyListeners();
   }
 
   void toggleTheme() {
     isDarkMode = !isDarkMode;
-    _preferences?.setBool(_themeKey, isDarkMode);
+    unawaited(_storage.writeTheme(isDarkMode));
     notifyListeners();
   }
 
@@ -195,7 +300,10 @@ class AppState extends ChangeNotifier {
         'password': password,
       }));
       await _applyAuthentication(data);
-      await refreshCustomerData(silent: true);
+      await refreshCustomerData(
+        silent: true,
+        announceNotifications: false,
+      );
     } finally {
       _setBusy(false);
     }
@@ -223,7 +331,10 @@ class AppState extends ChangeNotifier {
       };
       final data = _map(await api.post('/customer/auth/register', body: body));
       await _applyAuthentication(data);
-      await refreshCustomerData(silent: true);
+      await refreshCustomerData(
+        silent: true,
+        announceNotifications: false,
+      );
     } finally {
       _setBusy(false);
     }
@@ -262,7 +373,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshCustomerData({bool silent = false}) async {
+  Future<void> refreshCustomerData({
+    bool silent = false,
+    bool announceNotifications = true,
+  }) async {
     if (!api.hasToken) return;
     if (!silent) _setBusy(true);
     try {
@@ -270,21 +384,18 @@ class AppState extends ChangeNotifier {
         api.get('/customer/profile'),
         api.get('/customer/notifications'),
         api.get('/customer/orders'),
+        api.get('/customer/saved-addresses'),
       ]);
       final profile = _map(responses[0]);
       currentUser = AppUser.fromJson(
         _map(profile['customer']),
         loyalty: _mapOrNull(profile['loyalty']),
       );
-      final notificationList = _map(responses[1])['notifications'];
-      notifications
-        ..clear()
-        ..addAll(
-          notificationList is List
-              ? notificationList.whereType<Map>().map((item) =>
-                  NotificationItem.fromJson(Map<String, dynamic>.from(item)))
-              : const <NotificationItem>[],
-        );
+      await _mergeSavedAddressesSnapshot(_map(responses[3])['addresses']);
+      _replaceNotifications(
+        _map(responses[1])['notifications'],
+        announceNew: announceNotifications,
+      );
       final orderList = _map(responses[2])['orders'];
       orders
         ..clear()
@@ -309,6 +420,125 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshOrdersLive() async {
+    if (!api.hasToken || _ordersRefreshInFlight) return;
+    _ordersRefreshInFlight = true;
+    try {
+      final data = _map(await api.get('/customer/orders'));
+      final rawOrders = data['orders'];
+      final nextOrders = rawOrders is List
+          ? rawOrders
+              .whereType<Map>()
+              .map((item) =>
+                  OrderRecord.fromJson(Map<String, dynamic>.from(item)))
+              .toList(growable: false)
+          : const <OrderRecord>[];
+      if (_orderStateFingerprint(nextOrders) ==
+          _orderStateFingerprint(orders)) {
+        return;
+      }
+      orders
+        ..clear()
+        ..addAll(nextOrders);
+      isOnline = true;
+      lastError = null;
+      notifyListeners();
+    } on ApiException catch (error) {
+      if (error.isUnauthorized) await _clearSession();
+    } finally {
+      _ordersRefreshInFlight = false;
+    }
+  }
+
+  Future<void> refreshNotificationsLive() async {
+    if (!api.hasToken || _notificationsRefreshInFlight) return;
+    _notificationsRefreshInFlight = true;
+    try {
+      final data = _map(await api.get('/customer/notifications'));
+      final raw = data['notifications'];
+      final next = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((item) =>
+                  NotificationItem.fromJson(Map<String, dynamic>.from(item)))
+              .toList(growable: false)
+          : const <NotificationItem>[];
+      if (_notificationFingerprint(next) ==
+          _notificationFingerprint(notifications)) {
+        return;
+      }
+      _replaceNotifications(next);
+      isOnline = true;
+      lastError = null;
+      notifyListeners();
+    } on ApiException catch (error) {
+      if (error.isUnauthorized) await _clearSession();
+    } finally {
+      _notificationsRefreshInFlight = false;
+    }
+  }
+
+  Future<void> refreshSavedAddressesLive() async {
+    if (!api.hasToken || _savedAddressesRefreshInFlight) return;
+    _savedAddressesRefreshInFlight = true;
+    try {
+      final before = _savedAddressFingerprint(savedAddresses);
+      final data = _map(await api.get('/customer/saved-addresses'));
+      await _mergeSavedAddressesSnapshot(data['addresses']);
+      if (before != _savedAddressFingerprint(savedAddresses)) {
+        notifyListeners();
+      }
+    } on ApiException catch (error) {
+      if (error.isUnauthorized) await _clearSession();
+    } finally {
+      _savedAddressesRefreshInFlight = false;
+    }
+  }
+
+  String _notificationFingerprint(List<NotificationItem> source) =>
+      jsonEncode(source.map((item) => [item.id, item.isRead]).toList());
+
+  void _replaceNotifications(dynamic raw, {bool announceNew = true}) {
+    final next = raw is List<NotificationItem>
+        ? raw
+        : raw is List
+            ? raw
+                .whereType<Map>()
+                .map((item) =>
+                    NotificationItem.fromJson(Map<String, dynamic>.from(item)))
+                .toList(growable: false)
+            : const <NotificationItem>[];
+    final knownIds = notifications.map((item) => item.id).toSet();
+    final shouldAnnounce = announceNew && _notificationBaselineReady;
+    notifications
+      ..clear()
+      ..addAll(next);
+    _notificationBaselineReady = true;
+
+    if (!shouldAnnounce || _notificationEvents.isClosed) return;
+    for (final item in next
+        .where((item) => !item.isRead && !knownIds.contains(item.id))
+        .take(1)) {
+      _notificationEvents.add(item);
+    }
+  }
+
+  String _orderStateFingerprint(List<OrderRecord> source) => jsonEncode(
+        source
+            .map((order) => [
+                  order.id,
+                  order.status.name,
+                  order.deliveryStatus,
+                  order.reservationStatus,
+                  order.driver?.id,
+                  order.canRateDriver,
+                ])
+            .toList(growable: false),
+      );
+
+  String _savedAddressFingerprint(List<SavedAddress> source) =>
+      jsonEncode(source.map((item) => item.toJson()).toList(growable: false));
+
   Future<void> logout() async {
     try {
       if (api.hasToken) await api.post('/customer/auth/logout');
@@ -325,9 +555,18 @@ class AppState extends ChangeNotifier {
     currentUser =
         AppUser(fullName: 'Guest', email: '', phone: '', loyaltyPoints: 0);
     notifications.clear();
+    _notificationBaselineReady = false;
     orders.clear();
+    for (var index = 0; index < savedAddresses.length; index++) {
+      savedAddresses[index] =
+          SavedAddress(type: SavedAddressType.values[index]);
+    }
+    hasPendingSavedAddressMigration = false;
+    await _storage.clearSavedAddresses();
+    await _storage.clearSavedAddressesOwner();
     _cart.clear();
     await _saveCart();
+    await _clearPendingOrder();
     resetOrderFlow(notify: false);
   }
 
@@ -339,7 +578,7 @@ class AppState extends ChangeNotifier {
     String? bio,
     String? city,
     String? imageLabel,
-    String? currentPassword,
+    required String currentPassword,
     String? newPassword,
     String? newPasswordConfirmation,
   }) async {
@@ -351,8 +590,7 @@ class AppState extends ChangeNotifier {
         'address': city?.trim() ?? '',
         'bio': bio?.trim() ?? '',
         'date_of_birth': birthDate == null ? null : _dateOnly(birthDate),
-        if (newPassword?.isNotEmpty ?? false)
-          'current_password': currentPassword,
+        'current_password': currentPassword,
         if (newPassword?.isNotEmpty ?? false) 'new_password': newPassword,
         if (newPassword?.isNotEmpty ?? false)
           'new_password_confirmation': newPasswordConfirmation,
@@ -377,7 +615,7 @@ class AppState extends ChangeNotifier {
   Future<void> updateAvatar({
     required List<int> bytes,
     required String filename,
-    String? currentPassword,
+    required String currentPassword,
   }) async {
     final data = _map(await api.uploadImage(
       '/customer/avatar',
@@ -452,6 +690,9 @@ class AppState extends ChangeNotifier {
     double? latitude,
     double? longitude,
     double? quotedCost,
+    List<List<double>> routeGeometry = const [],
+    int? durationMinutes,
+    bool routeIsFallback = false,
   }) {
     selectedDeliveryAddressAr = addressAr;
     selectedDeliveryAddressEn = addressEn;
@@ -459,6 +700,22 @@ class AppState extends ChangeNotifier {
     selectedDeliveryLatitude = latitude;
     selectedDeliveryLongitude = longitude;
     deliveryCost = quotedCost ?? _deliveryCostEstimate(distanceMeters);
+    selectedDeliveryRouteGeometry = List<List<double>>.unmodifiable(
+      routeGeometry.map((point) => List<double>.unmodifiable(point)),
+    );
+    selectedDeliveryDurationMinutes = durationMinutes;
+    selectedDeliveryRouteIsFallback = routeIsFallback;
+    notifyListeners();
+  }
+
+  void clearConfirmedDeliveryLocation() {
+    selectedDeliveryDistanceMeters = null;
+    selectedDeliveryLatitude = null;
+    selectedDeliveryLongitude = null;
+    deliveryCost = 0;
+    selectedDeliveryRouteGeometry = const [];
+    selectedDeliveryDurationMinutes = null;
+    selectedDeliveryRouteIsFallback = false;
     notifyListeners();
   }
 
@@ -473,15 +730,47 @@ class AppState extends ChangeNotifier {
     required DateTime reservationTime,
     int durationMinutes = 60,
   }) async {
-    final data = _map(await api.get(
-      '/public/reservations/table/$tableNumber/availability',
-      query: {
+    final tables = await loadReservationTables(
+      reservationTime: reservationTime,
+      durationMinutes: durationMinutes,
+    );
+    final table =
+        tables.where((item) => item.number == tableNumber).firstOrNull;
+    return table?.isAvailable == true;
+  }
+
+  Future<List<ReservationTable>> loadReservationTables({
+    DateTime? reservationTime,
+    int durationMinutes = 60,
+  }) async {
+    final data = _map(await api.get('/public/reservations/tables', query: {
+      if (reservationTime != null)
         'reservation_time': reservationTime.toIso8601String(),
-        'duration_minutes': durationMinutes,
-        'live': 1,
-      },
-    ));
-    return data['is_available'] == true || data['available'] == true;
+      'duration_minutes': durationMinutes,
+    }));
+    final raw = data['tables'];
+    final next = raw is List
+        ? raw
+            .whereType<Map>()
+            .map((item) =>
+                ReservationTable.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false)
+        : const <ReservationTable>[];
+    reservationTables
+      ..clear()
+      ..addAll(next);
+    final livePricing = _map(data['pricing_info']);
+    if (livePricing.isNotEmpty) {
+      pricing = {
+        ...pricing,
+        'reservation': {
+          ..._map(pricing['reservation']),
+          ...livePricing,
+        },
+      };
+    }
+    notifyListeners();
+    return List.unmodifiable(reservationTables);
   }
 
   void confirmReservation({
@@ -499,8 +788,14 @@ class AppState extends ChangeNotifier {
     reservationDurationMinutes = durationMinutes;
     reservationNotes = notes;
     final reservation = _map(pricing['reservation']);
-    final vipExtra = _toDouble(reservation['vip_table_extra_cost'], 50);
-    final freeSeats = _toInt(reservation['free_seats_count'], 0);
+    final vipExtra = _toDouble(
+      reservation['vip_extra_cost'] ?? reservation['vip_table_extra_cost'],
+      50,
+    );
+    final freeSeats = _toInt(
+      reservation['free_seats'] ?? reservation['free_seats_count'],
+      4,
+    );
     final perSeat = _toDouble(reservation['cost_per_extra_seat'], 20);
     reservationExtra = (isVip ? vipExtra : 0) +
         ((seatsCount - freeSeats).clamp(0, seatsCount) * perSeat);
@@ -544,6 +839,11 @@ class AppState extends ChangeNotifier {
     _validateOrderContext();
     _setBusy(true);
     try {
+      final checkoutFingerprint = _checkoutFingerprint();
+      if (_pendingOrderId != null &&
+          _storage.pendingOrderFingerprint != checkoutFingerprint) {
+        await _clearPendingOrder();
+      }
       String orderId;
       Map<String, dynamic>? orderJson;
       if (_pendingOrderId != null) {
@@ -557,7 +857,10 @@ class AppState extends ChangeNotifier {
           throw const ApiException('تعذر قراءة رقم الطلب الجديد من الخادم.');
         }
         _pendingOrderId = orderId;
-        await _preferences?.setString(_pendingOrderKey, orderId);
+        await _storage.savePendingOrder(
+          id: orderId,
+          fingerprint: checkoutFingerprint,
+        );
       }
 
       final paymentBody = <String, dynamic>{
@@ -579,13 +882,22 @@ class AppState extends ChangeNotifier {
               ? 'دفع نقدي عند الاستلام'
               : 'Cash on delivery / pickup',
       };
-      await api.post('/customer/orders/$orderId/pay', body: paymentBody);
-      _pendingOrderId = null;
-      await _preferences?.remove(_pendingOrderKey);
+      try {
+        await api.post('/customer/orders/$orderId/pay', body: paymentBody);
+      } on ApiException catch (error) {
+        if (error.statusCode == 404 && orderJson == null) {
+          await _clearPendingOrder();
+        }
+        rethrow;
+      }
+      await _clearPendingOrder();
       _cart.clear();
       await _saveCart();
       resetOrderFlow(notify: false);
-      await refreshCustomerData(silent: true);
+      await refreshCustomerData(
+        silent: true,
+        announceNotifications: false,
+      );
       return orders.firstWhere(
         (order) => order.id == orderId,
         orElse: () => OrderRecord.fromJson(orderJson ?? {'id': orderId}),
@@ -593,6 +905,28 @@ class AppState extends ChangeNotifier {
     } finally {
       _setBusy(false);
     }
+  }
+
+  String _checkoutFingerprint() => jsonEncode({
+        'type': currentOrderType.name,
+        'items': cartItems
+            .map((item) => [
+                  item.product.itemType.name,
+                  item.product.referenceId,
+                  item.quantity,
+                ])
+            .toList(growable: false),
+        'delivery': currentOrderType == OrderType.delivery
+            ? [selectedDeliveryLatitude, selectedDeliveryLongitude]
+            : null,
+        'reservation': currentOrderType == OrderType.reservation
+            ? [selectedTableNumber, selectedReservationTime, selectedSeatsCount]
+            : null,
+      });
+
+  Future<void> _clearPendingOrder() async {
+    _pendingOrderId = null;
+    await _storage.clearPendingOrder();
   }
 
   void _validateOrderContext() {
@@ -651,26 +985,173 @@ class AppState extends ChangeNotifier {
     return payload;
   }
 
-  Future<void> cancelOrder(String orderId) async {
-    await api.delete('/customer/orders/$orderId');
+  Future<Map<String, dynamic>> cancelOrder(String orderId) async {
+    final data = _map(await api.delete('/customer/orders/$orderId'));
     await refreshCustomerData(silent: true);
     notifyListeners();
+    return _map(data['refund']);
   }
 
-  Future<void> saveAddress(SavedAddress address) async {
-    final index =
-        savedAddresses.indexWhere((item) => item.type == address.type);
-    if (index == -1) return;
-    savedAddresses[index] = address;
-    await _preferences?.setString(
-      _savedAddressesKey,
-      jsonEncode(savedAddresses.map((item) => item.toJson()).toList()),
-    );
+  Future<OrderType> prepareReorder(String orderId) async {
+    final data = _map(await api.get('/customer/orders/$orderId'));
+    final order = OrderRecord.fromJson(_map(data['order']));
+    final nextCart = <String, CartItem>{};
+    for (final oldItem in order.items) {
+      final product = productsCatalog
+          .where((candidate) =>
+              candidate.id == oldItem.product.id &&
+              candidate.itemType == oldItem.product.itemType &&
+              candidate.isAvailable)
+          .firstOrNull;
+      if (product == null) continue;
+      nextCart['${product.itemType.name}:${product.id}'] = CartItem(
+        product: product,
+        quantity: oldItem.quantity.clamp(1, product.maxQuantity),
+        note: oldItem.note,
+      );
+    }
+    if (nextCart.isEmpty) {
+      throw const ApiException(
+          'لا توجد عناصر متاحة حاليًا من هذا الطلب لإضافتها إلى السلة.');
+    }
+    _cart
+      ..clear()
+      ..addAll(nextCart);
+    currentOrderType = order.type;
+    orderNotes = order.notes;
+    resetOrderFlow(notify: false);
+    currentOrderType = order.type;
+    orderNotes = order.notes;
+    await _saveCart();
+    notifyListeners();
+    return order.type;
+  }
+
+  Future<void> reportUnavailable(Product product) async {
+    final productId = product.referenceId;
+    if (!isAuthenticated ||
+        product.itemType != CatalogItemType.product ||
+        productId == null ||
+        reportedUnavailableProductIds.contains(productId)) {
+      return;
+    }
+    await api.post('/customer/products/$productId/report-unavailable');
+    reportedUnavailableProductIds.add(productId);
     notifyListeners();
   }
 
-  void _restoreSavedAddresses() {
-    final raw = _preferences?.getString(_savedAddressesKey);
+  Future<void> saveAddress(
+    SavedAddress address, {
+    required String currentPassword,
+  }) async {
+    if (!address.hasAddress || !address.isPinned) {
+      throw const ApiException(
+        'يجب كتابة وصف العنوان وتثبيت موقعه على الخريطة قبل الحفظ.',
+      );
+    }
+    final data = _map(await api.put(
+      '/customer/saved-addresses/${address.type.name}',
+      body: {
+        ...address.toJson(),
+        'current_password': currentPassword,
+      },
+    ));
+    await _replaceSavedAddressesSnapshot(data['addresses']);
+    notifyListeners();
+  }
+
+  Future<void> clearAddress(
+    SavedAddressType type, {
+    required String currentPassword,
+  }) async {
+    final data = _map(await api.delete(
+      '/customer/saved-addresses/${type.name}',
+      body: {'current_password': currentPassword},
+    ));
+    await _replaceSavedAddressesSnapshot(data['addresses']);
+    notifyListeners();
+  }
+
+  Future<void> syncPendingSavedAddresses({
+    required String currentPassword,
+  }) async {
+    final addresses = savedAddresses
+        .where((address) => address.hasAddress && address.isPinned)
+        .map((address) => address.toJson())
+        .toList(growable: false);
+    final data = _map(await api.put('/customer/saved-addresses', body: {
+      'addresses': addresses,
+      'current_password': currentPassword,
+    }));
+    await _replaceSavedAddressesSnapshot(data['addresses']);
+    notifyListeners();
+  }
+
+  Future<void> _mergeSavedAddressesSnapshot(dynamic raw) async {
+    final remote = _parseSavedAddresses(raw);
+    final owner = _storage.savedAddressesOwner;
+    final customerId = currentUser.id;
+    final legacyCache = owner == null;
+    var pendingMigration = false;
+
+    for (final type in SavedAddressType.values) {
+      final index = savedAddresses.indexWhere((item) => item.type == type);
+      if (index == -1) continue;
+      final serverAddress = remote[type];
+      final cachedAddress = savedAddresses[index];
+      if (serverAddress != null) {
+        savedAddresses[index] = serverAddress;
+      } else if (legacyCache &&
+          cachedAddress.hasAddress &&
+          cachedAddress.isPinned) {
+        pendingMigration = true;
+      } else {
+        savedAddresses[index] = SavedAddress(type: type);
+      }
+    }
+
+    hasPendingSavedAddressMigration = pendingMigration;
+    await _cacheSavedAddresses();
+    if (!pendingMigration && customerId != null) {
+      await _storage.writeSavedAddressesOwner(customerId);
+    }
+  }
+
+  Future<void> _replaceSavedAddressesSnapshot(dynamic raw) async {
+    final remote = _parseSavedAddresses(raw);
+    for (final type in SavedAddressType.values) {
+      final index = savedAddresses.indexWhere((item) => item.type == type);
+      if (index != -1) {
+        savedAddresses[index] = remote[type] ?? SavedAddress(type: type);
+      }
+    }
+    hasPendingSavedAddressMigration = false;
+    await _cacheSavedAddresses();
+    if (currentUser.id != null) {
+      await _storage.writeSavedAddressesOwner(currentUser.id!);
+    }
+  }
+
+  Map<SavedAddressType, SavedAddress> _parseSavedAddresses(dynamic raw) {
+    if (raw is! List) return const {};
+    return {
+      for (final item in raw.whereType<Map>())
+        SavedAddress.fromJson(Map<String, dynamic>.from(item)).type:
+            SavedAddress.fromJson(Map<String, dynamic>.from(item)),
+    };
+  }
+
+  Future<void> _cacheSavedAddresses() => _storage.writeSavedAddresses(
+        jsonEncode(savedAddresses.map((item) => item.toJson()).toList()),
+      );
+
+  Future<void> _restoreSavedAddresses() async {
+    var raw = await _storage.readSavedAddresses();
+    final legacyRaw = _storage.legacySavedAddresses;
+    final isLegacy = (raw == null || raw.isEmpty) &&
+        legacyRaw != null &&
+        legacyRaw.isNotEmpty;
+    if (isLegacy) raw = legacyRaw;
     if (raw == null || raw.isEmpty) return;
     try {
       final decoded = jsonDecode(raw);
@@ -681,8 +1162,15 @@ class AppState extends ChangeNotifier {
             .indexWhere((current) => current.type == address.type);
         if (index != -1) savedAddresses[index] = address;
       }
+      if (isLegacy) {
+        await _storage.writeSavedAddresses(
+          jsonEncode(savedAddresses.map((item) => item.toJson()).toList()),
+        );
+        await _storage.clearLegacySavedAddresses();
+      }
     } on FormatException {
-      _preferences?.remove(_savedAddressesKey);
+      await _storage.clearSavedAddresses();
+      await _storage.clearLegacySavedAddresses();
     }
   }
 
@@ -738,6 +1226,9 @@ class AppState extends ChangeNotifier {
     selectedDeliveryLatitude = null;
     selectedDeliveryLongitude = null;
     deliveryCost = 0;
+    selectedDeliveryRouteGeometry = const [];
+    selectedDeliveryDurationMinutes = null;
+    selectedDeliveryRouteIsFallback = false;
     selectedTableNumber = null;
     selectedTableIsVip = false;
     selectedReservationTime = null;
@@ -745,19 +1236,19 @@ class AppState extends ChangeNotifier {
     reservationDurationMinutes = 60;
     reservationNotes = '';
     reservationExtra = 0;
+    orderNotes = '';
     currentOrderType = OrderType.ordinary;
     if (notify) notifyListeners();
   }
 
   Future<void> _saveCart() async {
-    await _preferences?.setString(
-      _cartKey,
+    await _storage.writeCartSnapshot(
       jsonEncode(cartItems.map((item) => item.toJson()).toList()),
     );
   }
 
   void _restoreCart() {
-    final raw = _preferences?.getString(_cartKey);
+    final raw = _storage.cartSnapshot;
     if (raw == null || raw.isEmpty) return;
     try {
       final decoded = jsonDecode(raw);
@@ -780,13 +1271,19 @@ class AppState extends ChangeNotifier {
         );
       }
     } catch (_) {
-      _preferences?.remove(_cartKey);
+      unawaited(_storage.clearCartSnapshot());
     }
   }
 
   void _setBusy(bool value) {
-    isBusy = value;
-    notifyListeners();
+    final wasBusy = isBusy;
+    if (value) {
+      _busyOperations += 1;
+    } else if (_busyOperations > 0) {
+      _busyOperations -= 1;
+    }
+    isBusy = _busyOperations > 0;
+    if (wasBusy != isBusy) notifyListeners();
   }
 
   String _dateOnly(DateTime value) => value.toIso8601String().split('T').first;
@@ -805,6 +1302,8 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _sync.dispose();
+    _notificationEvents.close();
     api.dispose();
     super.dispose();
   }

@@ -30,6 +30,19 @@ class ApiConfig {
     return 'http://127.0.0.1:8000/api';
   }
 
+  static bool get hasSecureProductionEndpoint =>
+      _definedBase.trim().isNotEmpty &&
+      isValidProductionBase(_definedBase.trim());
+
+  static bool isValidProductionBase(String value) {
+    final uri = Uri.tryParse(value.trim());
+    return uri != null &&
+        uri.scheme == 'https' &&
+        uri.host.isNotEmpty &&
+        uri.host != 'localhost' &&
+        uri.host != '127.0.0.1';
+  }
+
   static String assetUrl(String? value) {
     if (value == null || value.trim().isEmpty) return '';
     final trimmed = value.trim();
@@ -49,20 +62,33 @@ class ApiException implements Exception {
   final int? statusCode;
   final Map<String, dynamic>? errors;
 
-  bool get isUnauthorized => statusCode == 401 || statusCode == 403;
+  bool get isUnauthorized => statusCode == 401;
+  bool get isForbidden => statusCode == 403;
+  bool get isTransient =>
+      statusCode == null ||
+      statusCode == 408 ||
+      statusCode == 429 ||
+      (statusCode != null && statusCode! >= 500);
 
   @override
   String toString() => message;
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient, FlutterSecureStorage? secureStorage})
-      : _http = httpClient ?? http.Client(),
+  ApiClient({
+    http.Client? httpClient,
+    FlutterSecureStorage? secureStorage,
+    String? baseUrl,
+  })  : _baseUrl =
+            (baseUrl ?? ApiConfig.baseUrl).replaceFirst(RegExp(r'/$'), ''),
+        _http = httpClient ?? http.Client(),
         _storage = secureStorage ?? const FlutterSecureStorage();
 
   static const _tokenKey = 'taza_customer_token';
   final http.Client _http;
   final FlutterSecureStorage _storage;
+  final String _baseUrl;
+  final Map<String, Future<dynamic>> _inFlightGets = {};
   String? _token;
 
   String? get token => _token;
@@ -82,8 +108,22 @@ class ApiClient {
     await _storage.delete(key: _tokenKey);
   }
 
-  Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
-      request('GET', path, query: query);
+  Future<dynamic> get(String path, {Map<String, dynamic>? query}) {
+    final key = '${_token ?? 'guest'}|$path|${jsonEncode(query ?? const {})}';
+    final running = _inFlightGets[key];
+    if (running != null) return running;
+    final future = request('GET', path, query: query);
+    _inFlightGets[key] = future;
+    unawaited(future.then<void>(
+      (_) {
+        if (identical(_inFlightGets[key], future)) _inFlightGets.remove(key);
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(_inFlightGets[key], future)) _inFlightGets.remove(key);
+      },
+    ));
+    return future;
+  }
 
   Future<dynamic> post(String path, {Map<String, dynamic>? body}) =>
       request('POST', path, body: body);
@@ -91,7 +131,8 @@ class ApiClient {
   Future<dynamic> put(String path, {Map<String, dynamic>? body}) =>
       request('PUT', path, body: body);
 
-  Future<dynamic> delete(String path) => request('DELETE', path);
+  Future<dynamic> delete(String path, {Map<String, dynamic>? body}) =>
+      request('DELETE', path, body: body);
 
   Future<dynamic> request(
     String method,
@@ -100,40 +141,62 @@ class ApiClient {
     Map<String, dynamic>? body,
     Duration timeout = const Duration(seconds: 15),
   }) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}${_normalizePath(path)}')
-        .replace(
-            queryParameters:
-                query?.map((key, value) => MapEntry(key, '$value')));
+    final queryParameters = query == null
+        ? null
+        : <String, String>{
+            for (final entry in query.entries)
+              if (entry.value != null) entry.key: '${entry.value}',
+          };
+    final uri = Uri.parse('$_baseUrl${_normalizePath(path)}')
+        .replace(queryParameters: queryParameters);
     final headers = <String, String>{
       'Accept': 'application/json',
       if (body != null) 'Content-Type': 'application/json',
       if (hasToken) 'Authorization': 'Bearer $_token',
     };
 
-    try {
-      late http.Response response;
-      final encoded = body == null ? null : jsonEncode(body);
-      switch (method) {
-        case 'POST':
-          response = await _http
-              .post(uri, headers: headers, body: encoded)
-              .timeout(timeout);
-        case 'PUT':
-          response = await _http
-              .put(uri, headers: headers, body: encoded)
-              .timeout(timeout);
-        case 'DELETE':
-          response = await _http.delete(uri, headers: headers).timeout(timeout);
-        default:
-          response = await _http.get(uri, headers: headers).timeout(timeout);
+    final attempts = method == 'GET' ? 2 : 1;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        final response = await _send(
+          method,
+          uri,
+          headers: headers,
+          encodedBody: body == null ? null : jsonEncode(body),
+          timeout: timeout,
+        );
+        return _decode(response);
+      } on ApiException catch (error) {
+        if (attempt == attempts || !error.isTransient) rethrow;
+      } on TimeoutException {
+        if (attempt == attempts) {
+          throw const ApiException('انتهت مهلة الاتصال، حاول مرة أخرى.');
+        }
+      } on http.ClientException {
+        if (attempt == attempts) {
+          throw const ApiException(
+              'تعذر الاتصال بالخادم. تحقق من الإنترنت وعنوان الـ API.');
+        }
       }
-      return _decode(response);
-    } on TimeoutException {
-      throw const ApiException('انتهت مهلة الاتصال، حاول مرة أخرى.');
-    } on http.ClientException {
-      throw const ApiException(
-          'تعذر الاتصال بالخادم. تحقق من الإنترنت وعنوان الـ API.');
+      await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
     }
+    throw const ApiException('تعذر تنفيذ الطلب.');
+  }
+
+  Future<http.Response> _send(
+    String method,
+    Uri uri, {
+    required Map<String, String> headers,
+    required String? encodedBody,
+    required Duration timeout,
+  }) {
+    final request = switch (method) {
+      'POST' => _http.post(uri, headers: headers, body: encodedBody),
+      'PUT' => _http.put(uri, headers: headers, body: encodedBody),
+      'DELETE' => _http.delete(uri, headers: headers, body: encodedBody),
+      _ => _http.get(uri, headers: headers),
+    };
+    return request.timeout(timeout);
   }
 
   Future<dynamic> uploadImage(
@@ -144,7 +207,7 @@ class ApiClient {
   }) async {
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('${ApiConfig.baseUrl}${_normalizePath(path)}'),
+      Uri.parse('$_baseUrl${_normalizePath(path)}'),
     );
     request.headers['Accept'] = 'application/json';
     if (hasToken) request.headers['Authorization'] = 'Bearer $_token';

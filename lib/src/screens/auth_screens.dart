@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 
+import '../core/app_constants.dart';
 import '../router.dart';
+import '../services/profile_image_service.dart';
 import '../widgets.dart';
 import 'screen_common.dart';
 
@@ -16,7 +18,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _identifier = TextEditingController();
   final _password = TextEditingController();
-  bool _obscure = true;
 
   @override
   void dispose() {
@@ -58,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
               key: _formKey,
               child: Column(
                 children: [
-                  Image.asset('assets/images/taza041-logo.jpg',
+                  Image.asset(AppAssets.logo,
                       width: 112, height: 112, fit: BoxFit.cover),
                   const SizedBox(height: 16),
                   Text(
@@ -95,21 +96,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         : null,
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  AppPasswordField(
                     controller: _password,
-                    obscureText: _obscure,
                     autofillHints: const [AutofillHints.password],
                     onFieldSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.lock_outline_rounded),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(_obscure
-                            ? Icons.visibility_off_rounded
-                            : Icons.visibility_rounded),
-                      ),
-                      hintText: tr(context, ar: 'كلمة المرور', en: 'Password'),
-                    ),
+                    label: tr(context, ar: 'كلمة المرور', en: 'Password'),
                     validator: (value) => value == null || value.isEmpty
                         ? tr(context,
                             ar: 'كلمة المرور مطلوبة',
@@ -166,6 +157,7 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final _imageService = ProfileImageService();
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _email = TextEditingController();
@@ -174,9 +166,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _password = TextEditingController();
   final _confirmation = TextEditingController();
   DateTime? _birthday;
-  XFile? _avatar;
-  bool _obscure = true;
-  bool _obscureConfirmation = true;
+  CroppedFile? _avatar;
 
   @override
   void dispose() {
@@ -200,12 +190,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _chooseAvatar() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 88,
-      maxWidth: 1600,
+    final source = await showImageSourcePicker(context);
+    if (source == null || !mounted) return;
+    final picked = await _imageService.pickAndCrop(
+      source: source,
+      title: tr(context, ar: 'تعديل الصورة', en: 'Edit photo'),
     );
-    if (picked != null) setState(() => _avatar = picked);
+    if (picked != null && mounted) setState(() => _avatar = picked);
   }
 
   Future<void> _submit() async {
@@ -232,7 +223,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (_avatar != null) {
         await state.updateAvatar(
           bytes: await _avatar!.readAsBytes(),
-          filename: _avatar!.name,
+          filename: 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg',
           currentPassword: _password.text,
         );
       }
@@ -366,19 +357,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  AppPasswordField(
                     controller: _password,
-                    obscureText: _obscure,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.lock_outline_rounded),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(_obscure
-                            ? Icons.visibility_off_rounded
-                            : Icons.visibility_rounded),
-                      ),
-                      hintText: tr(context, ar: 'كلمة المرور', en: 'Password'),
-                    ),
+                    label: tr(context, ar: 'كلمة المرور', en: 'Password'),
                     validator: (value) => (value?.length ?? 0) < 6
                         ? tr(context,
                             ar: 'كلمة المرور 6 أحرف على الأقل',
@@ -386,21 +367,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         : null,
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  AppPasswordField(
                     controller: _confirmation,
-                    obscureText: _obscureConfirmation,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.verified_user_outlined),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(
-                            () => _obscureConfirmation = !_obscureConfirmation),
-                        icon: Icon(_obscureConfirmation
-                            ? Icons.visibility_off_rounded
-                            : Icons.visibility_rounded),
-                      ),
-                      hintText: tr(context,
-                          ar: 'تأكيد كلمة المرور', en: 'Confirm password'),
-                    ),
+                    prefixIcon: Icons.verified_user_outlined,
+                    label: tr(context,
+                        ar: 'تأكيد كلمة المرور', en: 'Confirm password'),
                     validator: (value) => value != _password.text
                         ? tr(context,
                             ar: 'كلمتا المرور غير متطابقتين',
@@ -630,28 +601,21 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                             : null,
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  AppPasswordField(
                     controller: _password,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      hintText: tr(context,
-                          ar: 'كلمة المرور الجديدة', en: 'New password'),
-                    ),
+                    label: tr(context,
+                        ar: 'كلمة المرور الجديدة', en: 'New password'),
                     validator: (value) => (value?.length ?? 0) < 6
                         ? tr(context,
                             ar: '6 أحرف على الأقل', en: 'At least 6 characters')
                         : null,
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  AppPasswordField(
                     controller: _confirmation,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.verified_user_outlined),
-                      hintText: tr(context,
-                          ar: 'تأكيد كلمة المرور', en: 'Confirm password'),
-                    ),
+                    prefixIcon: Icons.verified_user_outlined,
+                    label: tr(context,
+                        ar: 'تأكيد كلمة المرور', en: 'Confirm password'),
                     validator: (value) => value != _password.text
                         ? tr(context,
                             ar: 'كلمتا المرور غير متطابقتين',
