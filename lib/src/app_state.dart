@@ -150,6 +150,7 @@ class AppState extends ChangeNotifier {
       restaurant = RestaurantProfile.fromJson(_map(data['restaurant']));
       restaurantImages = _map(data['images']);
       pricing = _map(data['pricing']);
+      _syncLoyaltyFromPricing();
       _replaceCatalog(data['products'], data['offers']);
       await _storage.writePublicSnapshot(jsonEncode(data));
       isOnline = true;
@@ -210,6 +211,7 @@ class AppState extends ChangeNotifier {
       restaurant = RestaurantProfile.fromJson(_map(data['restaurant']));
       restaurantImages = _map(data['images']);
       pricing = _map(data['pricing']);
+      _syncLoyaltyFromPricing();
       _replaceCatalog(data['products'], data['offers'], reconcileCart: false);
       _publicRevision = data['revision']?.toString();
       usingFallback = true;
@@ -233,6 +235,7 @@ class AppState extends ChangeNotifier {
           RestaurantProfile.fromJson(_map(restaurantData['restaurant']));
       restaurantImages = _map(_map(responses[1])['images']);
       pricing = _map(responses[4]);
+      _syncLoyaltyFromPricing();
 
       final catalog = <Product>[];
       final rawProducts = <Map<String, dynamic>>[];
@@ -283,6 +286,28 @@ class AppState extends ChangeNotifier {
     language = language == AppLanguage.ar ? AppLanguage.en : AppLanguage.ar;
     unawaited(_storage.writeLanguage(language.code));
     notifyListeners();
+  }
+
+  void _syncLoyaltyFromPricing() {
+    if (!isAuthenticated) return;
+    final loyalty = _map(pricing['loyalty']);
+    final rawTiers = loyalty['tiers'];
+    if (rawTiers is! List) return;
+
+    final tiers = rawTiers
+        .whereType<Map>()
+        .map((tier) => Map<String, dynamic>.from(tier))
+        .toList(growable: false);
+    if (tiers.isEmpty) return;
+
+    currentUser.loyaltyTiers = tiers;
+    final current = tiers.where(
+      (tier) => '${tier['key']}' == currentUser.loyaltyTier,
+    );
+    if (current.isNotEmpty) {
+      currentUser.loyaltyMultiplier =
+          _toDouble(current.first['earning_multiplier'], 1);
+    }
   }
 
   void toggleTheme() {
@@ -597,10 +622,15 @@ class AppState extends ChangeNotifier {
       }));
       currentUser = AppUser.fromJson(
         _map(data['customer']),
-        loyalty: {
-          'points': currentUser.loyaltyPoints,
-          'tier': currentUser.loyaltyTier
-        },
+        loyalty: _mapOrNull(data['loyalty']) ??
+            {
+              'points_balance': currentUser.loyaltyPoints,
+              'tier': currentUser.loyaltyTier,
+              'earning_multiplier': currentUser.loyaltyMultiplier,
+              'tier_progress': currentUser.loyaltyProgress,
+              'points_to_next_tier': currentUser.pointsToNextTier,
+              'tier_catalog': currentUser.loyaltyTiers,
+            },
       );
       if (newPassword?.isNotEmpty ?? false) {
         await api.clearToken();
@@ -825,7 +855,8 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  int loyaltyPointsForAmount(double amount) => (amount / 10).floor();
+  int loyaltyPointsForAmount(double amount) =>
+      ((amount / 10) * currentUser.loyaltyMultiplier).floor();
   int requiredLoyaltyPoints(double amount) => (amount / 10).ceil();
 
   Future<OrderRecord> completeOrder(

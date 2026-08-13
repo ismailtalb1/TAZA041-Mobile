@@ -256,6 +256,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             ),
           ),
           const SizedBox(height: 14),
+          _LoyaltyProgramCard(user: user),
+          const SizedBox(height: 14),
           TazaCard(
             child: Form(
               key: _formKey,
@@ -426,6 +428,297 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           ),
           const SizedBox(height: 14),
           const _SavedAddressesCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoyaltyProgramCard extends StatelessWidget {
+  const _LoyaltyProgramCard({required this.user});
+
+  final AppUser user;
+
+  static const _fallbackTiers = <Map<String, dynamic>>[
+    {
+      'key': 'bronze',
+      'name_ar': 'برونزي',
+      'name_en': 'Bronze',
+      'icon': '🥉',
+      'minimum_points': 0,
+      'earning_multiplier': 1.0,
+    },
+    {
+      'key': 'silver',
+      'name_ar': 'فضي',
+      'name_en': 'Silver',
+      'icon': '🥈',
+      'minimum_points': 400,
+      'earning_multiplier': 1.2,
+    },
+    {
+      'key': 'gold',
+      'name_ar': 'ذهبي',
+      'name_en': 'Gold',
+      'icon': '🥇',
+      'minimum_points': 700,
+      'earning_multiplier': 1.5,
+    },
+    {
+      'key': 'platinum',
+      'name_ar': 'بلاتينيوم',
+      'name_en': 'Platinum',
+      'icon': '💎',
+      'minimum_points': 1000,
+      'earning_multiplier': 2.0,
+    },
+  ];
+
+  double _decimal(dynamic value, [double fallback = 0]) =>
+      value is num ? value.toDouble() : double.tryParse('$value') ?? fallback;
+
+  int _whole(dynamic value) =>
+      value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+
+  String _multiplier(dynamic value) {
+    final number = _decimal(value, 1);
+    return number == number.roundToDouble()
+        ? number.toStringAsFixed(1)
+        : number.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tiers =
+        user.loyaltyTiers.isEmpty ? _fallbackTiers : user.loyaltyTiers;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final isArabic = Directionality.of(context) == TextDirection.rtl;
+    final current = tiers.cast<Map<String, dynamic>>().firstWhere(
+          (tier) => '${tier['key']}' == user.loyaltyTier,
+          orElse: () => tiers.first,
+        );
+    final currentName = isArabic
+        ? '${current['name_ar'] ?? 'برونزي'}'
+        : '${current['name_en'] ?? 'Bronze'}';
+    final progress = (user.loyaltyProgress / 100).clamp(0.0, 1.0);
+
+    return TazaCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: TazaColors.accent.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: Icon(Icons.workspace_premium_outlined,
+                      color: TazaColors.accent),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr(context, ar: 'برنامج الولاء', en: 'Loyalty program'),
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      tr(context,
+                          ar: 'اجمع النقاط وتقدّم لمضاعفة مكافآت كل طلب.',
+                          en: 'Earn points and level up to multiply every order reward.'),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: onSurface.withValues(alpha: .65),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: TazaColors.accent.withValues(alpha: .09),
+              borderRadius: BorderRadius.circular(18),
+              border:
+                  Border.all(color: TazaColors.accent.withValues(alpha: .2)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Text('${current['icon'] ?? '⭐'}',
+                          style: const TextStyle(fontSize: 25)),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(currentName,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w900)),
+                            Text(
+                              tr(context,
+                                  ar: '${user.loyaltyPoints} نقطة',
+                                  en: '${user.loyaltyPoints} points'),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                      color: onSurface.withValues(alpha: .65)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '${_multiplier(user.loyaltyMultiplier)}×',
+                        textDirection: TextDirection.ltr,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: TazaColors.accent,
+                              fontWeight: FontWeight.w900,
+                            ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      minHeight: 7,
+                      value: progress,
+                      backgroundColor: onSurface.withValues(alpha: .08),
+                      color: TazaColors.accent,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      user.pointsToNextTier == null
+                          ? tr(context,
+                              ar: 'وصلت إلى أعلى مستوى',
+                              en: 'You reached the highest tier')
+                          : tr(context,
+                              ar: 'متبقي ${user.pointsToNextTier} نقطة للمستوى التالي',
+                              en: '${user.pointsToNextTier} points to the next tier'),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: onSurface.withValues(alpha: .65),
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final itemWidth = constraints.maxWidth >= 620
+                  ? (constraints.maxWidth - 30) / 4
+                  : (constraints.maxWidth - 10) / 2;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: tiers.map((tier) {
+                  final active = '${tier['key']}' == user.loyaltyTier;
+                  final name = isArabic
+                      ? '${tier['name_ar'] ?? tier['key']}'
+                      : '${tier['name_en'] ?? tier['key']}';
+                  return SizedBox(
+                    width: itemWidth,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.all(11),
+                      decoration: BoxDecoration(
+                        color: active
+                            ? TazaColors.accent.withValues(alpha: .13)
+                            : onSurface.withValues(alpha: .035),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: active
+                              ? TazaColors.accent.withValues(alpha: .48)
+                              : Theme.of(context).dividerColor,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text('${tier['icon'] ?? '⭐'}',
+                                  style: const TextStyle(fontSize: 19)),
+                              const Spacer(),
+                              Text(
+                                '${_multiplier(tier['earning_multiplier'])}×',
+                                textDirection: TextDirection.ltr,
+                                style: TextStyle(
+                                  color: active
+                                      ? TazaColors.accent
+                                      : onSurface.withValues(alpha: .82),
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900)),
+                          Text(
+                            tr(context,
+                                ar: 'من ${_whole(tier['minimum_points'])} نقطة',
+                                en: 'From ${_whole(tier['minimum_points'])} points'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: onSurface.withValues(alpha: .58),
+                                      fontSize: 10.5,
+                                    ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(growable: false),
+              );
+            },
+          ),
+          const SizedBox(height: 11),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.info_outline_rounded,
+                  size: 17, color: TazaColors.accent),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  tr(context,
+                      ar: 'كل 10 ل.س = نقطة أساسية، ويُطبّق معامل مستواك تلقائياً عند الدفع.',
+                      en: 'Every 10 SYP = one base point; your tier multiplier is applied automatically at payment.'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: onSurface.withValues(alpha: .65),
+                      ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

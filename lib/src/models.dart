@@ -250,6 +250,10 @@ class AppUser {
     required this.phone,
     required this.loyaltyPoints,
     this.loyaltyTier = 'bronze',
+    this.loyaltyMultiplier = 1.0,
+    this.loyaltyProgress = 0,
+    this.pointsToNextTier,
+    this.loyaltyTiers = const [],
     this.birthDate,
     this.bio = '',
     this.city = '',
@@ -276,6 +280,23 @@ class AppUser {
       ),
       loyaltyTier:
           (loyaltyMap?['tier'] ?? json['loyalty_tier'] ?? 'bronze').toString(),
+      loyaltyMultiplier: _number(
+        loyaltyMap?['earning_multiplier'] ??
+            (loyaltyMap?['earning_info'] is Map
+                ? (loyaltyMap?['earning_info'] as Map)['current_multiplier']
+                : null) ??
+            1,
+      ),
+      loyaltyProgress: _number(loyaltyMap?['tier_progress']),
+      pointsToNextTier: loyaltyMap?['points_to_next_tier'] == null
+          ? null
+          : _integer(loyaltyMap?['points_to_next_tier']),
+      loyaltyTiers: loyaltyMap?['tier_catalog'] is List
+          ? (loyaltyMap!['tier_catalog'] as List)
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+          : const [],
       birthDate: birth == null ? null : DateTime.tryParse(birth),
       city: (json['address'] ?? json['city'] ?? '').toString(),
       bio: (json['bio'] ?? '').toString(),
@@ -291,6 +312,10 @@ class AppUser {
   String phone;
   int loyaltyPoints;
   String loyaltyTier;
+  double loyaltyMultiplier;
+  double loyaltyProgress;
+  int? pointsToNextTier;
+  List<Map<String, dynamic>> loyaltyTiers;
   DateTime? birthDate;
   String bio;
   String city;

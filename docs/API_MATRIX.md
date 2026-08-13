@@ -6,12 +6,13 @@
 | المنيو والعروض | `GET /public/products`، `GET /public/offers`، `GET /public/pricing` |
 | الحساب | `POST /customer/auth/login`، `register`، `forgot-password`، `reset-password`، `logout` |
 | الملف الشخصي | `GET/PUT /customer/profile`، `POST /customer/avatar` |
+| العناوين المحفوظة | `GET/PUT /customer/saved-addresses`، `PUT/DELETE /customer/saved-addresses/{type}` |
 | الطلبات | `GET/POST /customer/orders`، `GET /customer/orders/{id}`، `DELETE /customer/orders/{id}` |
 | إعادة الطلب | `GET /customer/orders/{id}` ثم مطابقة العناصر المتاحة مع الكتالوج الحي قبل بناء السلة |
 | بلاغ عدم التوفر | `POST /customer/products/{id}/report-unavailable` |
 | الدفع | `POST /customer/orders/{id}/pay` |
 | التوصيل | `GET /public/delivery/quote` للمسافة والمدة والتكلفة و`route.geometry`، وإحداثيات الطلب ضمن إنشاء الطلب |
-| الحجوزات | `GET /public/reservations/table/{number}/availability`، وبيانات الحجز ضمن إنشاء الطلب |
+| الحجوزات | `GET /public/reservations/tables`، `GET /public/reservations/table/{number}/availability`، وبيانات الحجز ضمن إنشاء الطلب |
 | الإشعارات | `GET /customer/notifications`، `PUT /{id}/read`، `PUT /read-all` |
 | التقييم | `POST /customer/delivery/{id}/rate`، `POST /customer/orders/{orderId}/products/{productId}/rate` |
 | المساعد | `POST /public/ai/chat` أو `POST /customer/ai/chat` |

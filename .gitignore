@@ -5,6 +5,7 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 .idea/
+.github/modernize/
 android/key.properties
 android/*.jks
 android/*.keystore
