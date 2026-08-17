@@ -77,6 +77,7 @@ class AppState extends ChangeNotifier {
   bool _notificationsRefreshInFlight = false;
   bool _savedAddressesRefreshInFlight = false;
   bool _notificationBaselineReady = false;
+  int? _activeCustomerStateOwner;
   int _busyOperations = 0;
   String? _publicRevision;
   final Set<int> reportedUnavailableProductIds = {};
@@ -98,12 +99,10 @@ class AppState extends ChangeNotifier {
       language =
           _storage.languageCode == 'en' ? AppLanguage.en : AppLanguage.ar;
       isDarkMode = _storage.isDarkMode;
-      _pendingOrderId = _storage.pendingOrderId;
       await _restoreSavedAddresses();
       await _restorePublicCache();
       await api.restoreToken();
       await loadPublicData(silent: true);
-      _restoreCart();
       if (api.hasToken) {
         try {
           await refreshCustomerData(
@@ -393,6 +392,7 @@ class AppState extends ChangeNotifier {
       _map(data['customer']),
       loyalty: _mapOrNull(data['loyalty']),
     );
+    await _activateCustomerState(currentUser.id);
     isAuthenticated = true;
     lastError = null;
     notifyListeners();
@@ -416,6 +416,7 @@ class AppState extends ChangeNotifier {
         _map(profile['customer']),
         loyalty: _mapOrNull(profile['loyalty']),
       );
+      await _activateCustomerState(currentUser.id);
       await _mergeSavedAddressesSnapshot(_map(responses[3])['addresses']);
       _replaceNotifications(
         _map(responses[1])['notifications'],
@@ -462,9 +463,26 @@ class AppState extends ChangeNotifier {
           _orderStateFingerprint(orders)) {
         return;
       }
+      final previousStatuses = {
+        for (final order in orders) order.id: order.status,
+      };
+      final hasNewCompletion = nextOrders.any(
+        (order) =>
+            order.status == OrderStatus.completed &&
+            previousStatuses[order.id] != OrderStatus.completed,
+      );
+      AppUser? refreshedUser;
+      if (hasNewCompletion) {
+        final profile = _map(await api.get('/customer/profile'));
+        refreshedUser = AppUser.fromJson(
+          _map(profile['customer']),
+          loyalty: _mapOrNull(profile['loyalty']),
+        );
+      }
       orders
         ..clear()
         ..addAll(nextOrders);
+      if (refreshedUser != null) currentUser = refreshedUser;
       isOnline = true;
       lastError = null;
       notifyListeners();
@@ -592,6 +610,8 @@ class AppState extends ChangeNotifier {
     _cart.clear();
     await _saveCart();
     await _clearPendingOrder();
+    await _storage.clearCustomerStateOwner();
+    _activeCustomerStateOwner = null;
     resetOrderFlow(notify: false);
   }
 
@@ -1276,6 +1296,22 @@ class AppState extends ChangeNotifier {
     await _storage.writeCartSnapshot(
       jsonEncode(cartItems.map((item) => item.toJson()).toList()),
     );
+  }
+
+  Future<void> _activateCustomerState(int? customerId) async {
+    if (customerId == null || _activeCustomerStateOwner == customerId) return;
+
+    _cart.clear();
+    resetOrderFlow(notify: false);
+    if (_storage.customerStateOwner != customerId) {
+      await _storage.clearCartSnapshot();
+      await _clearPendingOrder();
+      await _storage.writeCustomerStateOwner(customerId);
+    } else {
+      _pendingOrderId = _storage.pendingOrderId;
+      _restoreCart();
+    }
+    _activeCustomerStateOwner = customerId;
   }
 
   void _restoreCart() {

@@ -14,6 +14,7 @@ class AppStorage {
   static const _cartKey = 'taza_cart';
   static const _pendingOrderKey = 'taza_pending_order_id';
   static const _pendingOrderFingerprintKey = 'taza_pending_order_fingerprint';
+  static const _customerStateOwnerKey = 'taza_customer_state_owner';
   static const _savedAddressesKey = 'taza_saved_addresses';
   static const _savedAddressesOwnerKey = 'taza_saved_addresses_owner';
   static const _publicCacheKey = 'taza_public_snapshot_v1';
@@ -45,6 +46,7 @@ class AppStorage {
       _prefs.getString(_pendingOrderFingerprintKey);
   String? get publicSnapshot => _prefs.getString(_publicCacheKey);
   String? get cartSnapshot => _prefs.getString(_cartKey);
+  int? get customerStateOwner => _prefs.getInt(_customerStateOwnerKey);
   String? get legacySavedAddresses => _prefs.getString(_savedAddressesKey);
   int? get savedAddressesOwner => _prefs.getInt(_savedAddressesOwnerKey);
 
@@ -95,6 +97,16 @@ class AppStorage {
       _prefs.remove(_pendingOrderKey),
       _prefs.remove(_pendingOrderFingerprintKey),
     ]);
+  }
+
+  Future<void> writeCustomerStateOwner(int customerId) async {
+    await initialize();
+    await _prefs.setInt(_customerStateOwnerKey, customerId);
+  }
+
+  Future<void> clearCustomerStateOwner() async {
+    await initialize();
+    await _prefs.remove(_customerStateOwnerKey);
   }
 
   Future<String?> readSavedAddresses() =>

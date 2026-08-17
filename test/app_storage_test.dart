@@ -18,6 +18,7 @@ void main() {
     await storage.writeCartSnapshot('[{"id":1}]');
     await storage.writePublicSnapshot('{"revision":"1"}');
     await storage.savePendingOrder(id: '42', fingerprint: 'checkout-v1');
+    await storage.writeCustomerStateOwner(19);
 
     expect(storage.languageCode, 'en');
     expect(storage.isDarkMode, isFalse);
@@ -25,6 +26,7 @@ void main() {
     expect(storage.publicSnapshot, '{"revision":"1"}');
     expect(storage.pendingOrderId, '42');
     expect(storage.pendingOrderFingerprint, 'checkout-v1');
+    expect(storage.customerStateOwner, 19);
   });
 
   test('pending checkout metadata is cleared atomically', () async {
@@ -36,5 +38,16 @@ void main() {
 
     expect(storage.pendingOrderId, isNull);
     expect(storage.pendingOrderFingerprint, isNull);
+  });
+
+  test('customer state ownership can be cleared when the session ends',
+      () async {
+    final storage = AppStorage();
+    await storage.initialize();
+    await storage.writeCustomerStateOwner(8);
+
+    await storage.clearCustomerStateOwner();
+
+    expect(storage.customerStateOwner, isNull);
   });
 }
