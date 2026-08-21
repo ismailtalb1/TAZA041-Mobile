@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/catalog_search.dart';
+import '../core/input_validation.dart';
 import '../models.dart';
 import '../router.dart';
 import '../theme.dart';
@@ -21,6 +23,8 @@ class _MenuScreenState extends State<MenuScreen> {
   ProductCategory? _category;
   double _maxPrice = 1000;
   bool _availableOnly = false;
+  bool _topRatedOnly = false;
+  bool _offersOnly = false;
   bool _initialized = false;
 
   @override
@@ -40,18 +44,20 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   List<Product> _filtered(AppState state) {
-    final query = _search.text.trim().toLowerCase();
-    final result = state.productsCatalog.where((item) {
-      final matchesQuery = query.isEmpty ||
-          item.nameAr.toLowerCase().contains(query) ||
-          item.nameEn.toLowerCase().contains(query) ||
-          item.descriptionAr.toLowerCase().contains(query) ||
-          item.descriptionEn.toLowerCase().contains(query);
-      return matchesQuery &&
-          (_category == null || item.category == _category) &&
+    final query = _search.text.trim();
+    final scoped = state.productsCatalog.where((item) {
+      final matchesCategory = _offersOnly
+          ? item.itemType == CatalogItemType.offer
+          : (_category == null || item.category == _category);
+      return matchesCategory &&
           item.price <= _maxPrice &&
-          (!_availableOnly || item.isAvailable);
+          (!_availableOnly || item.isAvailable) &&
+          (!_topRatedOnly || item.rating >= 4.5);
     }).toList();
+    final result = CatalogSearch.rank(scoped, query)
+        .map((match) => match.product)
+        .toList(growable: false);
+    if (query.isNotEmpty) return result;
     result.sort((a, b) {
       if (a.isAvailable != b.isAvailable) return a.isAvailable ? -1 : 1;
       return a.nameAr.compareTo(b.nameAr);
@@ -59,10 +65,22 @@ class _MenuScreenState extends State<MenuScreen> {
     return result;
   }
 
+  String? _correction(AppState state, BuildContext context) {
+    final query = _search.text.trim();
+    if (query.length < 2) return null;
+    final matches = CatalogSearch.rank(state.productsCatalog, query);
+    return CatalogSearch.bestCorrection(
+      matches,
+      query,
+      arabic: isArabic(context),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     final products = _filtered(state);
+    final correction = _correction(state, context);
     return TazaShell(
       titleAr: 'المنيو',
       titleEn: 'Menu',
@@ -91,6 +109,7 @@ class _MenuScreenState extends State<MenuScreen> {
             const SizedBox(height: 14),
             TextField(
               controller: _search,
+              inputFormatters: CustomerInputValidation.limited(100),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search_rounded),
@@ -108,6 +127,24 @@ class _MenuScreenState extends State<MenuScreen> {
                     en: 'Search meals, drinks, or offers'),
               ),
             ),
+            if (correction != null) ...[
+              const SizedBox(height: 5),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: () {
+                    _search.text = correction;
+                    _search.selection =
+                        TextSelection.collapsed(offset: correction.length);
+                    setState(() {});
+                  },
+                  icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
+                  label: Text(
+                    '${tr(context, ar: 'هل تقصد؟', en: 'Did you mean?')} $correction',
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TazaCard(
               child: Column(
@@ -160,6 +197,30 @@ class _MenuScreenState extends State<MenuScreen> {
                     divisions: 19,
                     label: formatCurrency(_maxPrice),
                     onChanged: (value) => setState(() => _maxPrice = value),
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilterChip(
+                        selected: _topRatedOnly,
+                        onSelected: (value) =>
+                            setState(() => _topRatedOnly = value),
+                        avatar:
+                            const Icon(Icons.star_outline_rounded, size: 18),
+                        label: Text(
+                            tr(context, ar: 'الأعلى تقييماً', en: 'Top rated')),
+                      ),
+                      FilterChip(
+                        selected: _offersOnly,
+                        onSelected: (value) =>
+                            setState(() => _offersOnly = value),
+                        avatar:
+                            const Icon(Icons.local_offer_outlined, size: 18),
+                        label: Text(
+                            tr(context, ar: 'العروض فقط', en: 'Offers only')),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -409,6 +470,15 @@ Future<void> showCartSheet(BuildContext context) {
                     onPressed: state.cartItems.isEmpty
                         ? null
                         : () {
+                            if (!CustomerInputValidation.isSafeText(notes.text,
+                                min: 2, max: 500)) {
+                              showMessage(
+                                  context,
+                                  tr(context,
+                                      ar: 'تحقق من صيغة ملاحظة الطلب',
+                                      en: 'Check the order note'));
+                              return;
+                            }
                             Navigator.pop(sheetContext);
                             final route = switch (state.currentOrderType) {
                               OrderType.ordinary => AppRoutes.payment,

@@ -101,6 +101,42 @@ class GuestHomeScreen extends StatelessWidget {
               bodyEn: 'An account is required only at checkout.',
             ),
             const SizedBox(height: 24),
+            const SectionHeader(
+              titleAr: 'أنواع الطلب',
+              titleEn: 'Order types',
+              subtitleAr: 'اختر المسار المناسب لك بعد تسجيل الدخول.',
+              subtitleEn: 'Choose your preferred flow after signing in.',
+            ),
+            const SizedBox(height: 12),
+            OrderTypeActionCard(
+              icon: Icons.lunch_dining_rounded,
+              titleAr: 'طلب عادي',
+              titleEn: 'Ordinary order',
+              bodyAr: 'استلام سريع من المطعم ثم الدفع.',
+              bodyEn: 'Quick restaurant pickup, then payment.',
+              onTap: () => showAuthRequiredSheet(context),
+            ),
+            const SizedBox(height: 10),
+            OrderTypeActionCard(
+              icon: Icons.delivery_dining_rounded,
+              titleAr: 'طلب توصيل',
+              titleEn: 'Delivery order',
+              bodyAr: 'حدد موقعك واعرف أجور التوصيل قبل الدفع.',
+              bodyEn: 'Set your location and review the fee before payment.',
+              accentColor: TazaColors.info,
+              onTap: () => showAuthRequiredSheet(context),
+            ),
+            const SizedBox(height: 10),
+            OrderTypeActionCard(
+              icon: Icons.table_restaurant_rounded,
+              titleAr: 'حجز طاولة',
+              titleEn: 'Table reservation',
+              bodyAr: 'اختر الطاولة والوقت وعدد المقاعد بسهولة.',
+              bodyEn: 'Choose a table, time, and seat count with ease.',
+              accentColor: Color(0xFFAD83ED),
+              onTap: () => showAuthRequiredSheet(context),
+            ),
+            const SizedBox(height: 24),
             _ProductSection(
               titleAr: 'العروض اليومية',
               titleEn: 'Daily offers',
@@ -113,48 +149,6 @@ class GuestHomeScreen extends StatelessWidget {
               titleEn: 'Featured products',
               products: featured,
               onAdd: (_) => showAuthRequiredSheet(context),
-            ),
-            const SizedBox(height: 24),
-            const SectionHeader(
-              titleAr: 'أنواع الطلب',
-              titleEn: 'Order types',
-              subtitleAr: 'اختر المسار المناسب لك بعد تسجيل الدخول.',
-              subtitleEn: 'Choose your preferred flow after signing in.',
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 228,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  OrderTypeActionCard(
-                    icon: Icons.lunch_dining_rounded,
-                    titleAr: 'طلب عادي',
-                    titleEn: 'Ordinary order',
-                    bodyAr: 'استلام من المطعم ثم الدفع.',
-                    bodyEn: 'Restaurant pickup, then payment.',
-                    onTap: () => showAuthRequiredSheet(context),
-                  ),
-                  const SizedBox(width: 12),
-                  OrderTypeActionCard(
-                    icon: Icons.delivery_dining_rounded,
-                    titleAr: 'طلب توصيل',
-                    titleEn: 'Delivery order',
-                    bodyAr: 'تحديد الموقع وحساب الأجور قبل الدفع.',
-                    bodyEn: 'Location and fee confirmation before payment.',
-                    onTap: () => showAuthRequiredSheet(context),
-                  ),
-                  const SizedBox(width: 12),
-                  OrderTypeActionCard(
-                    icon: Icons.table_restaurant_rounded,
-                    titleAr: 'حجز طاولة',
-                    titleEn: 'Table reservation',
-                    bodyAr: 'طاولة وموعد ومقاعد قبل الدفع.',
-                    bodyEn: 'Table, time, and seats before payment.',
-                    onTap: () => showAuthRequiredSheet(context),
-                  ),
-                ],
-              ),
             ),
             const SizedBox(height: 24),
             const AboutPreviewCard(),
@@ -232,22 +226,14 @@ class RegisteredHomeScreen extends StatelessWidget {
               subtitleEn: 'Choose an order type, then continue to the menu.',
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 228,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _orderCard(context, state, OrderType.ordinary,
-                      Icons.lunch_dining_rounded),
-                  const SizedBox(width: 12),
-                  _orderCard(context, state, OrderType.delivery,
-                      Icons.delivery_dining_rounded),
-                  const SizedBox(width: 12),
-                  _orderCard(context, state, OrderType.reservation,
-                      Icons.table_restaurant_rounded),
-                ],
-              ),
-            ),
+            _orderCard(
+                context, state, OrderType.ordinary, Icons.lunch_dining_rounded),
+            const SizedBox(height: 10),
+            _orderCard(context, state, OrderType.delivery,
+                Icons.delivery_dining_rounded),
+            const SizedBox(height: 10),
+            _orderCard(context, state, OrderType.reservation,
+                Icons.table_restaurant_rounded),
             const SizedBox(height: 24),
             _ProductSection(
               titleAr: 'العروض اليومية',
@@ -289,6 +275,11 @@ class RegisteredHomeScreen extends StatelessWidget {
 
   Widget _orderCard(
       BuildContext context, AppState state, OrderType type, IconData icon) {
+    final labels = switch (type) {
+      OrderType.ordinary => ('طلب عادي', 'Ordinary order'),
+      OrderType.delivery => ('طلب توصيل', 'Delivery order'),
+      OrderType.reservation => ('حجز طاولة', 'Table reservation'),
+    };
     final bodies = switch (type) {
       OrderType.ordinary => (
           'استلام من المطعم والدفع مباشرة.',
@@ -305,10 +296,15 @@ class RegisteredHomeScreen extends StatelessWidget {
     };
     return OrderTypeActionCard(
       icon: icon,
-      titleAr: orderTypeLabel(context, type),
-      titleEn: orderTypeLabel(context, type),
+      titleAr: labels.$1,
+      titleEn: labels.$2,
       bodyAr: bodies.$1,
       bodyEn: bodies.$2,
+      accentColor: switch (type) {
+        OrderType.ordinary => TazaColors.accent,
+        OrderType.delivery => TazaColors.info,
+        OrderType.reservation => const Color(0xFFAD83ED),
+      },
       onTap: () {
         state.openMenu(orderType: type);
         Navigator.pushNamed(context, AppRoutes.menu,
@@ -448,6 +444,15 @@ class AboutScreen extends StatelessWidget {
                       ? tr(context, ar: 'مفتوح الآن', en: 'Open now')
                       : tr(context, ar: 'مغلق الآن', en: 'Closed now'),
                 ),
+                if (restaurant.workingHours.isNotEmpty) ...[
+                  const Divider(height: 26),
+                  Text(
+                    tr(context, ar: 'ساعات العمل', en: 'Opening hours'),
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 8),
+                  _WorkingHoursList(restaurant: restaurant),
+                ],
               ],
             ),
           ),
@@ -626,5 +631,62 @@ class _InfoLine extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _WorkingHoursList extends StatelessWidget {
+  const _WorkingHoursList({required this.restaurant});
+
+  final RestaurantProfile restaurant;
+
+  static const _days = <(String, String, String)>[
+    ('saturday', 'السبت', 'Saturday'),
+    ('sunday', 'الأحد', 'Sunday'),
+    ('monday', 'الاثنين', 'Monday'),
+    ('tuesday', 'الثلاثاء', 'Tuesday'),
+    ('wednesday', 'الأربعاء', 'Wednesday'),
+    ('thursday', 'الخميس', 'Thursday'),
+    ('friday', 'الجمعة', 'Friday'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: _days.map((day) {
+        final hours = restaurant.hoursFor(day.$1);
+        final open = hours['open'] == true || hours['open'] == 1;
+        final value = open
+            ? '${_formatTime(context, '${hours['from'] ?? ''}')} – '
+                '${_formatTime(context, '${hours['to'] ?? ''}')}'
+            : tr(context, ar: 'مغلق', en: 'Closed');
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  isArabic(context) ? day.$2 : day.$3,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(value),
+            ],
+          ),
+        );
+      }).toList(growable: false),
+    );
+  }
+
+  String _formatTime(BuildContext context, String value) {
+    final parts = value.split(':');
+    if (parts.length < 2) return value.isEmpty ? '—' : value;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return value;
+    final suffix = hour < 12
+        ? tr(context, ar: 'ص', en: 'AM')
+        : tr(context, ar: 'م', en: 'PM');
+    return '${hour % 12 == 0 ? 12 : hour % 12}:'
+        '${minute.toString().padLeft(2, '0')} $suffix';
   }
 }

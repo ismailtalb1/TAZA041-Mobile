@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'api_client.dart';
 import 'core/app_storage.dart';
+import 'core/input_validation.dart';
 import 'models.dart';
 import 'sync_coordinator.dart';
 
@@ -42,6 +43,7 @@ class AppState extends ChangeNotifier {
 
   final List<NotificationItem> notifications = [];
   final List<OrderRecord> orders = [];
+  final List<MealSuggestion> mealSuggestions = [];
   final Map<String, CartItem> _cart = <String, CartItem>{};
   final List<Product> productsCatalog = [];
   final List<ReservationTable> reservationTables = [];
@@ -76,7 +78,10 @@ class AppState extends ChangeNotifier {
   bool _ordersRefreshInFlight = false;
   bool _notificationsRefreshInFlight = false;
   bool _savedAddressesRefreshInFlight = false;
+  bool _mealSuggestionsRefreshInFlight = false;
+  bool _mealSuggestionUpdatesEnabled = false;
   bool _notificationBaselineReady = false;
+  int _reservationTablesRequestId = 0;
   int? _activeCustomerStateOwner;
   int _busyOperations = 0;
   String? _publicRevision;
@@ -110,8 +115,8 @@ class AppState extends ChangeNotifier {
             announceNotifications: false,
           );
           isAuthenticated = true;
-        } on ApiException catch (error) {
-          if (error.isUnauthorized) await _clearSession();
+        } on ApiException {
+          // refreshCustomerData handles an unauthorized token atomically.
         }
       }
     } catch (error) {
@@ -129,6 +134,10 @@ class AppState extends ChangeNotifier {
 
   void setForeground(bool value) => _sync.setForeground(value);
 
+  void setMealSuggestionUpdatesEnabled(bool value) {
+    _mealSuggestionUpdatesEnabled = value;
+  }
+
   Future<void> _syncLiveData() async {
     await refreshPublicDataLive();
     if (!isAuthenticated) return;
@@ -136,11 +145,13 @@ class AppState extends ChangeNotifier {
       refreshOrdersLive(),
       refreshNotificationsLive(),
       refreshSavedAddressesLive(),
+      if (_mealSuggestionUpdatesEnabled) refreshMealSuggestions(),
     ]);
   }
 
   Future<void> refreshPublicDataLive() async {
     try {
+      final wasOpen = restaurant.isOpen;
       final data = _map(await api.get('/public/live-data', query: {
         if (_publicRevision != null) 'since': _publicRevision,
       }));
@@ -151,6 +162,28 @@ class AppState extends ChangeNotifier {
       pricing = _map(data['pricing']);
       _syncLoyaltyFromPricing();
       _replaceCatalog(data['products'], data['offers']);
+      if (isAuthenticated &&
+          wasOpen != restaurant.isOpen &&
+          !_notificationEvents.isClosed) {
+        _notificationEvents.add(NotificationItem(
+          id: 'restaurant-status-${data['revision'] ?? DateTime.now().millisecondsSinceEpoch}',
+          titleAr: restaurant.isOpen ? 'المطعم مفتوح الآن' : 'المطعم مغلق الآن',
+          titleEn: restaurant.isOpen
+              ? 'The restaurant is open now'
+              : 'The restaurant is closed now',
+          messageAr: restaurant.isOpen
+              ? 'يمكنك الآن تصفح المنيو وإرسال طلبك.'
+              : 'المطعم مغلق حالياً، وسنعلمك عندما يعود لاستقبال الطلبات.',
+          messageEn: restaurant.isOpen
+              ? 'You can now browse the menu and place your order.'
+              : 'The restaurant is currently closed; we will let you know when ordering resumes.',
+          timeLabelAr: 'الآن',
+          timeLabelEn: 'Now',
+          icon: Icons.storefront_rounded,
+          type: 'restaurant_status',
+          isRead: true,
+        ));
+      }
       await _storage.writePublicSnapshot(jsonEncode(data));
       isOnline = true;
       usingFallback = false;
@@ -277,7 +310,11 @@ class AppState extends ChangeNotifier {
       lastError = error.message;
       if (!silent) rethrow;
     } finally {
-      if (!silent) _setBusy(false);
+      if (!silent) {
+        _setBusy(false);
+      } else {
+        notifyListeners();
+      }
     }
   }
 
@@ -347,7 +384,8 @@ class AppState extends ChangeNotifier {
       final body = <String, dynamic>{
         'name': fullName.trim(),
         if (email?.trim().isNotEmpty ?? false) 'email': email!.trim(),
-        if (phone?.trim().isNotEmpty ?? false) 'phone': phone!.trim(),
+        if (phone?.trim().isNotEmpty ?? false)
+          'phone': CustomerInputValidation.normalizePhone(phone),
         if (address?.trim().isNotEmpty ?? false) 'address': address!.trim(),
         if (birthDate != null) 'date_of_birth': _dateOnly(birthDate),
         'password': password,
@@ -366,7 +404,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> requestPasswordReset(String identifier) => api.post(
         '/customer/auth/forgot-password',
-        body: {'identifier': identifier.trim()},
+        body: {'email': identifier.trim()},
       );
 
   Future<void> resetPassword({
@@ -376,8 +414,8 @@ class AppState extends ChangeNotifier {
     required String confirmation,
   }) =>
       api.post('/customer/auth/reset-password', body: {
-        'identifier': identifier.trim(),
-        'code': code.trim(),
+        'email': identifier.trim(),
+        'token': code.trim(),
         'password': password,
         'password_confirmation': confirmation,
       });
@@ -403,6 +441,7 @@ class AppState extends ChangeNotifier {
     bool announceNotifications = true,
   }) async {
     if (!api.hasToken) return;
+    final requestToken = api.token;
     if (!silent) _setBusy(true);
     try {
       final responses = await Future.wait<dynamic>([
@@ -438,7 +477,7 @@ class AppState extends ChangeNotifier {
       lastError = null;
     } on ApiException catch (error) {
       lastError = error.message;
-      if (error.isUnauthorized) await _clearSession();
+      await _clearSessionForUnauthorized(error, requestToken);
       rethrow;
     } finally {
       if (!silent) _setBusy(false);
@@ -448,6 +487,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> refreshOrdersLive() async {
     if (!api.hasToken || _ordersRefreshInFlight) return;
+    final requestToken = api.token;
     _ordersRefreshInFlight = true;
     try {
       final data = _map(await api.get('/customer/orders'));
@@ -487,7 +527,7 @@ class AppState extends ChangeNotifier {
       lastError = null;
       notifyListeners();
     } on ApiException catch (error) {
-      if (error.isUnauthorized) await _clearSession();
+      await _clearSessionForUnauthorized(error, requestToken);
     } finally {
       _ordersRefreshInFlight = false;
     }
@@ -495,6 +535,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> refreshNotificationsLive() async {
     if (!api.hasToken || _notificationsRefreshInFlight) return;
+    final requestToken = api.token;
     _notificationsRefreshInFlight = true;
     try {
       final data = _map(await api.get('/customer/notifications'));
@@ -515,7 +556,7 @@ class AppState extends ChangeNotifier {
       lastError = null;
       notifyListeners();
     } on ApiException catch (error) {
-      if (error.isUnauthorized) await _clearSession();
+      await _clearSessionForUnauthorized(error, requestToken);
     } finally {
       _notificationsRefreshInFlight = false;
     }
@@ -523,6 +564,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> refreshSavedAddressesLive() async {
     if (!api.hasToken || _savedAddressesRefreshInFlight) return;
+    final requestToken = api.token;
     _savedAddressesRefreshInFlight = true;
     try {
       final before = _savedAddressFingerprint(savedAddresses);
@@ -532,14 +574,77 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } on ApiException catch (error) {
-      if (error.isUnauthorized) await _clearSession();
+      await _clearSessionForUnauthorized(error, requestToken);
     } finally {
       _savedAddressesRefreshInFlight = false;
     }
   }
 
+  Future<void> refreshMealSuggestions({bool throwOnError = false}) async {
+    if (!api.hasToken || _mealSuggestionsRefreshInFlight) return;
+    final requestToken = api.token;
+    _mealSuggestionsRefreshInFlight = true;
+    try {
+      final data = _map(await api.get('/customer/meal-suggestions'));
+      final raw = data['suggestions'];
+      final next = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((item) =>
+                  MealSuggestion.fromJson(Map<String, dynamic>.from(item)))
+              .toList(growable: false)
+          : const <MealSuggestion>[];
+      if (_mealSuggestionFingerprint(next) ==
+          _mealSuggestionFingerprint(mealSuggestions)) {
+        return;
+      }
+      mealSuggestions
+        ..clear()
+        ..addAll(next);
+      isOnline = true;
+      lastError = null;
+      notifyListeners();
+    } on ApiException catch (error) {
+      await _clearSessionForUnauthorized(error, requestToken);
+      if (throwOnError) rethrow;
+    } finally {
+      _mealSuggestionsRefreshInFlight = false;
+    }
+  }
+
+  Future<MealSuggestion> submitMealSuggestion({
+    required String text,
+    List<int>? imageBytes,
+    String? imageFilename,
+  }) async {
+    final data = _map(await api.uploadMultipart(
+      '/customer/meal-suggestion',
+      fields: {'suggestion_text': text.trim()},
+      bytes: imageBytes,
+      filename: imageFilename,
+    ));
+    final suggestion = MealSuggestion.fromJson(_map(data['suggestion']));
+    mealSuggestions
+      ..removeWhere((item) => item.id == suggestion.id)
+      ..insert(0, suggestion);
+    notifyListeners();
+    return suggestion;
+  }
+
   String _notificationFingerprint(List<NotificationItem> source) =>
       jsonEncode(source.map((item) => [item.id, item.isRead]).toList());
+
+  String _mealSuggestionFingerprint(List<MealSuggestion> source) => jsonEncode(
+        source
+            .map((item) => [
+                  item.id,
+                  item.status.name,
+                  item.adminNote,
+                  item.imageUrl,
+                  item.updatedAt,
+                ])
+            .toList(growable: false),
+      );
 
   void _replaceNotifications(dynamic raw, {bool announceNew = true}) {
     final next = raw is List<NotificationItem>
@@ -592,14 +697,26 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _clearSession() async {
-    await api.clearToken();
+  Future<void> _clearSessionForUnauthorized(
+      ApiException error, String? requestToken) async {
+    if (!error.isUnauthorized ||
+        requestToken == null ||
+        api.token != requestToken) {
+      return;
+    }
+    await _clearSession(expectedToken: requestToken);
+  }
+
+  Future<void> _clearSession({String? expectedToken}) async {
+    final cleared = await api.clearToken(expectedToken: expectedToken);
+    if (!cleared || api.hasToken) return;
     isAuthenticated = false;
     currentUser =
         AppUser(fullName: 'Guest', email: '', phone: '', loyaltyPoints: 0);
     notifications.clear();
     _notificationBaselineReady = false;
     orders.clear();
+    mealSuggestions.clear();
     for (var index = 0; index < savedAddresses.length; index++) {
       savedAddresses[index] =
           SavedAddress(type: SavedAddressType.values[index]);
@@ -631,7 +748,7 @@ class AppState extends ChangeNotifier {
     try {
       final data = _map(await api.put('/customer/profile', body: {
         'name': fullName.trim(),
-        'phone': phone.trim(),
+        'phone': CustomerInputValidation.normalizePhone(phone),
         'address': city?.trim() ?? '',
         'bio': bio?.trim() ?? '',
         'date_of_birth': birthDate == null ? null : _dateOnly(birthDate),
@@ -652,10 +769,6 @@ class AppState extends ChangeNotifier {
               'tier_catalog': currentUser.loyaltyTiers,
             },
       );
-      if (newPassword?.isNotEmpty ?? false) {
-        await api.clearToken();
-        isAuthenticated = false;
-      }
       notifyListeners();
     } finally {
       _setBusy(false);
@@ -780,24 +893,30 @@ class AppState extends ChangeNotifier {
     required DateTime reservationTime,
     int durationMinutes = 60,
   }) async {
-    final tables = await loadReservationTables(
-      reservationTime: reservationTime,
-      durationMinutes: durationMinutes,
-    );
-    final table =
-        tables.where((item) => item.number == tableNumber).firstOrNull;
-    return table?.isAvailable == true;
+    final data = _map(await api.get(
+      '/public/reservations/table/$tableNumber/availability',
+      query: {
+        'reservation_time': reservationTime.toIso8601String(),
+        'duration_minutes': durationMinutes,
+        'live': 1,
+      },
+    ));
+    return data['is_available'] == true;
   }
 
   Future<List<ReservationTable>> loadReservationTables({
     DateTime? reservationTime,
     int durationMinutes = 60,
   }) async {
+    final requestId = ++_reservationTablesRequestId;
     final data = _map(await api.get('/public/reservations/tables', query: {
       if (reservationTime != null)
         'reservation_time': reservationTime.toIso8601String(),
       'duration_minutes': durationMinutes,
     }));
+    if (requestId != _reservationTablesRequestId) {
+      return List.unmodifiable(reservationTables);
+    }
     final raw = data['tables'];
     final next = raw is List
         ? raw
@@ -849,6 +968,18 @@ class AppState extends ChangeNotifier {
     final perSeat = _toDouble(reservation['cost_per_extra_seat'], 20);
     reservationExtra = (isVip ? vipExtra : 0) +
         ((seatsCount - freeSeats).clamp(0, seatsCount) * perSeat);
+    notifyListeners();
+  }
+
+  void clearConfirmedReservation() {
+    if (selectedTableNumber == null && selectedReservationTime == null) return;
+    selectedTableNumber = null;
+    selectedTableIsVip = false;
+    selectedReservationTime = null;
+    selectedSeatsCount = 2;
+    reservationDurationMinutes = 60;
+    reservationNotes = '';
+    reservationExtra = 0;
     notifyListeners();
   }
 
@@ -1302,6 +1433,7 @@ class AppState extends ChangeNotifier {
     if (customerId == null || _activeCustomerStateOwner == customerId) return;
 
     _cart.clear();
+    mealSuggestions.clear();
     resetOrderFlow(notify: false);
     if (_storage.customerStateOwner != customerId) {
       await _storage.clearCartSnapshot();

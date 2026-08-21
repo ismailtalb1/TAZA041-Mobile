@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../api_client.dart';
 import '../core/app_constants.dart';
+import '../core/input_validation.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../router.dart';
@@ -131,10 +132,9 @@ String _liveOrderStatusLabel(BuildContext context, OrderRecord order) {
   if (order.type == OrderType.delivery) {
     return switch (order.deliveryStatus) {
       'pending' => tr(context, ar: 'بانتظار سائق', en: 'Awaiting driver'),
-      'assigned' => tr(context, ar: 'تم تعيين السائق', en: 'Driver assigned'),
-      'picked_up' =>
-        tr(context, ar: 'استلم السائق الطلب', en: 'Picked up by driver'),
-      'in_delivery' => tr(context, ar: 'في الطريق', en: 'On the way'),
+      'assigned' => tr(context, ar: 'في الطريق مع السائق', en: 'On the way'),
+      'picked_up' => tr(context, ar: 'في الطريق مع السائق', en: 'On the way'),
+      'in_delivery' => tr(context, ar: 'في الطريق مع السائق', en: 'On the way'),
       'delivered' => tr(context, ar: 'تم التسليم', en: 'Delivered'),
       'cancelled' => tr(context, ar: 'ملغي', en: 'Cancelled'),
       _ => orderStatusLabel(context, order.status),
@@ -146,8 +146,7 @@ String _liveOrderStatusLabel(BuildContext context, OrderRecord order) {
         tr(context, ar: 'بانتظار التأكيد', en: 'Awaiting confirmation'),
       'confirmed' => tr(context, ar: 'الحجز مؤكد', en: 'Reservation confirmed'),
       'seated' => tr(context, ar: 'الجلسة قائمة', en: 'Table seated'),
-      'completed' =>
-        tr(context, ar: 'اكتمل الحجز', en: 'Reservation completed'),
+      'completed' => tr(context, ar: 'انتهت الجلسة', en: 'Session ended'),
       'no_show' => tr(context, ar: 'لم يحضر', en: 'No show'),
       'cancelled' => tr(context, ar: 'ملغي', en: 'Cancelled'),
       _ => orderStatusLabel(context, order.status),
@@ -594,10 +593,21 @@ Future<_RatingResult?> _showRatingDialog(
             child: Text(tr(context, ar: 'إلغاء', en: 'Cancel')),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _RatingResult(rating, comment.text),
-            ),
+            onPressed: () {
+              if (!CustomerInputValidation.isSafeText(comment.text,
+                  min: 2, max: 500)) {
+                showMessage(
+                    dialogContext,
+                    tr(dialogContext,
+                        ar: 'تحقق من صيغة التعليق',
+                        en: 'Check the comment format'));
+                return;
+              }
+              Navigator.pop(
+                dialogContext,
+                _RatingResult(rating, comment.text.trim()),
+              );
+            },
             child: Text(tr(context, ar: 'إرسال', en: 'Send')),
           ),
         ],

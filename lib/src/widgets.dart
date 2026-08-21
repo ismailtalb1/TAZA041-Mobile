@@ -193,8 +193,9 @@ class _TazaAppBar extends StatelessWidget implements PreferredSizeWidget {
                     ),
                   ),
                   _LogoTitle(
-                    compact: trailingControls.length > 2 &&
-                        constraints.maxWidth < 380,
+                    compact:
+                        leadingControls.length + trailingControls.length >= 3 &&
+                            constraints.maxWidth < 430,
                     subtitle: subtitle,
                   ),
                   Align(
@@ -301,6 +302,7 @@ class _ConnectionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
     return Semantics(
       liveRegion: true,
       child: Container(
@@ -319,15 +321,41 @@ class _ConnectionBanner extends StatelessWidget {
                 size: 19, color: TazaColors.warning),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                tr(context,
-                    ar: 'الاتصال غير مستقر؛ تُعرض آخر بيانات متاحة.',
-                    en: 'Connection is unstable; showing the latest available data.'),
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(fontWeight: FontWeight.w700),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr(context,
+                        ar: 'الاتصال غير مستقر؛ تُعرض آخر بيانات متاحة.',
+                        en: 'Connection is unstable; showing the latest available data.'),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  if (state.lastError?.isNotEmpty ?? false) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      state.lastError!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: .58),
+                          ),
+                    ),
+                  ],
+                ],
               ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: tr(context, ar: 'إعادة المحاولة', en: 'Retry'),
+              visualDensity: VisualDensity.compact,
+              onPressed: () async => state.loadPublicData(silent: true),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
             ),
           ],
         ),
@@ -456,8 +484,8 @@ class TazaDrawer extends StatelessWidget {
       ),
       (
         icon: Icons.smart_toy_outlined,
-        labelAr: 'اقتراح وجبة',
-        labelEn: 'Suggest a meal',
+        labelAr: 'محادثات الوجبة',
+        labelEn: 'Meal conversations',
         route: AppRoutes.aiSuggestion
       ),
     ];

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
 
 import '../core/app_constants.dart';
+import '../core/input_validation.dart';
 import '../router.dart';
 import '../services/profile_image_service.dart';
 import '../widgets.dart';
@@ -79,6 +80,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _identifier,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                    inputFormatters: CustomerInputValidation.limited(254),
                     textInputAction: TextInputAction.next,
                     autofillHints: const [
                       AutofillHints.email,
@@ -90,10 +93,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           ar: 'البريد الإلكتروني أو رقم الهاتف',
                           en: 'Email or phone number'),
                     ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? tr(context,
-                            ar: 'هذا الحقل مطلوب', en: 'This field is required')
-                        : null,
+                    validator: (value) =>
+                        !CustomerInputValidation.isIdentifier(value)
+                            ? tr(context,
+                                ar: 'أدخل بريداً صحيحاً أو رقماً من 10 أرقام يبدأ بـ 09',
+                                en: 'Enter a valid email or a 10-digit phone starting with 09')
+                            : null,
                   ),
                   const SizedBox(height: 12),
                   AppPasswordField(
@@ -283,20 +288,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 18),
                   TextFormField(
                     controller: _name,
+                    inputFormatters: CustomerInputValidation.limited(100),
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.person_outline_rounded),
                       hintText:
                           tr(context, ar: 'الاسم الكامل', en: 'Full name'),
                     ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? tr(context, ar: 'الاسم مطلوب', en: 'Name is required')
-                        : null,
+                    validator: (value) =>
+                        !CustomerInputValidation.isFullName(value)
+                            ? tr(context,
+                                ar: 'اكتب اسماً صحيحاً من الأحرف فقط',
+                                en: 'Enter a valid name using letters only')
+                            : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _email,
                     keyboardType: TextInputType.emailAddress,
+                    inputFormatters: CustomerInputValidation.limited(254),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.alternate_email_rounded),
                       hintText: tr(context,
@@ -305,7 +315,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     validator: (value) {
                       final text = value?.trim() ?? '';
-                      if (text.isNotEmpty && !text.contains('@')) {
+                      if (text.isNotEmpty &&
+                          !CustomerInputValidation.isEmail(text)) {
                         return tr(context,
                             ar: 'البريد الإلكتروني غير صحيح',
                             en: 'Invalid email address');
@@ -316,19 +327,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _phone,
-                    keyboardType: TextInputType.phone,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: CustomerInputValidation.phoneFormatters,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.phone_android_rounded),
                       hintText: tr(context,
-                          ar: 'رقم الهاتف (اختياري مع البريد)',
-                          en: 'Phone number (optional with email)'),
+                          ar: '09 12 345 678 (اختياري مع البريد)',
+                          en: '09 12 345 678 (optional with email)'),
                     ),
                     validator: (value) {
                       final text = value?.trim() ?? '';
-                      if (text.isNotEmpty && text.length < 7) {
+                      if (text.isNotEmpty &&
+                          !CustomerInputValidation.isPhone(text)) {
                         return tr(context,
-                            ar: 'رقم الهاتف غير صحيح',
-                            en: 'Invalid phone number');
+                            ar: 'الرقم 10 أرقام ويجب أن يبدأ بـ 09',
+                            en: 'Phone must be 10 digits and start with 09');
                       }
                       return null;
                     },
@@ -342,6 +356,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       hintText: tr(context,
                           ar: 'العنوان (اختياري)', en: 'Address (optional)'),
                     ),
+                    validator: (value) =>
+                        !CustomerInputValidation.isSafeText(value,
+                                min: 3, max: 500)
+                            ? tr(context,
+                                ar: 'أدخل عنواناً صحيحاً',
+                                en: 'Enter a valid address')
+                            : null,
                   ),
                   const SizedBox(height: 4),
                   SizedBox(
@@ -360,10 +381,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   AppPasswordField(
                     controller: _password,
                     label: tr(context, ar: 'كلمة المرور', en: 'Password'),
-                    validator: (value) => (value?.length ?? 0) < 6
+                    validator: (value) =>
+                        !CustomerInputValidation.isStrongPassword(value)
                         ? tr(context,
-                            ar: 'كلمة المرور 6 أحرف على الأقل',
-                            en: 'Password must be at least 6 characters')
+                            ar: 'استخدم 8 أحرف على الأقل تتضمن حروفاً وأرقاماً',
+                            en: 'Use at least 8 characters with letters and numbers')
                         : null,
                   ),
                   const SizedBox(height: 12),
@@ -428,9 +450,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _send() async {
-    if (_identifier.text.trim().isEmpty) {
+    if (!CustomerInputValidation.isEmail(_identifier.text)) {
       showMessage(context,
-          tr(context, ar: 'أدخل البريد أو الهاتف', en: 'Enter email or phone'));
+          tr(context, ar: 'أدخل بريداً إلكترونياً صحيحاً', en: 'Enter a valid email address'));
       return;
     }
     setState(() => _sending = true);
@@ -477,11 +499,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: _identifier,
+                  keyboardType: TextInputType.emailAddress,
+                  inputFormatters: CustomerInputValidation.limited(254),
                   decoration: InputDecoration(
                     prefixIcon: const Icon(Icons.alternate_email_rounded),
                     hintText: tr(context,
-                        ar: 'البريد الإلكتروني أو رقم الهاتف',
-                        en: 'Email or phone number'),
+                        ar: 'البريد الإلكتروني',
+                        en: 'Email address'),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -574,40 +598,44 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                 children: [
                   TextFormField(
                     controller: _identifier,
+                    keyboardType: TextInputType.emailAddress,
+                    inputFormatters: CustomerInputValidation.limited(254),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.alternate_email_rounded),
                       hintText: tr(context,
-                          ar: 'البريد الإلكتروني أو رقم الهاتف',
-                          en: 'Email or phone number'),
+                          ar: 'البريد الإلكتروني',
+                          en: 'Email address'),
                     ),
-                    validator: _required,
+                    validator: (value) =>
+                        !CustomerInputValidation.isEmail(value)
+                            ? tr(context,
+                                ar: 'أدخل بريداً إلكترونياً صحيحاً',
+                                en: 'Enter a valid email address')
+                            : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _code,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
+                    inputFormatters: CustomerInputValidation.limited(255),
+                    maxLength: 255,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.pin_outlined),
                       hintText: tr(context,
-                          ar: 'رمز التحقق (6 أرقام)',
-                          en: 'Verification code (6 digits)'),
+                          ar: 'رمز الاستعادة الموجود في الرابط',
+                          en: 'Recovery token from the link'),
                     ),
-                    validator: (value) =>
-                        !RegExp(r'^\d{6}$').hasMatch(value ?? '')
-                            ? tr(context,
-                                ar: 'أدخل رمزًا صحيحًا',
-                                en: 'Enter a valid code')
-                            : null,
+                    validator: _required,
                   ),
                   const SizedBox(height: 12),
                   AppPasswordField(
                     controller: _password,
                     label: tr(context,
                         ar: 'كلمة المرور الجديدة', en: 'New password'),
-                    validator: (value) => (value?.length ?? 0) < 6
+                    validator: (value) =>
+                        !CustomerInputValidation.isStrongPassword(value)
                         ? tr(context,
-                            ar: '6 أحرف على الأقل', en: 'At least 6 characters')
+                            ar: 'استخدم 8 أحرف على الأقل تتضمن حروفاً وأرقاماً',
+                            en: 'Use at least 8 characters with letters and numbers')
                         : null,
                   ),
                   const SizedBox(height: 12),

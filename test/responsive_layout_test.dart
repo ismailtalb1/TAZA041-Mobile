@@ -1,6 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:taza041_flutter_customer_mobile/src/api_client.dart';
 import 'package:taza041_flutter_customer_mobile/src/app_state.dart';
 import 'package:taza041_flutter_customer_mobile/src/models.dart';
 import 'package:taza041_flutter_customer_mobile/src/screens.dart';
@@ -37,7 +42,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final state = AppState()
+      final state = AppState(apiClient: _testApiClient())
         ..isAuthenticated = true
         ..currentUser = AppUser(
           fullName: 'TAZA Customer',
@@ -59,7 +64,10 @@ void main() {
         const NotificationsScreen(),
         const ProfileSettingsScreen(),
         const OrdersHistoryScreen(),
-        const AiSuggestionScreen(),
+        const MealConversationsScreen(),
+        const MealConversationsScreen(
+          args: MealConversationRouteArgs(openIdeas: true),
+        ),
         const AboutScreen(),
       ];
 
@@ -85,6 +93,19 @@ void main() {
     });
   }
 }
+
+ApiClient _testApiClient() => ApiClient(
+      baseUrl: 'https://api.example.test/api',
+      httpClient: MockClient((request) async => http.Response(
+            jsonEncode({
+              'success': true,
+              'data': request.url.path.endsWith('/meal-suggestions')
+                  ? {'suggestions': []}
+                  : <String, dynamic>{},
+            }),
+            200,
+          )),
+    );
 
 String _overflowReport(WidgetTester tester) {
   final reports = <String>[];

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
@@ -78,6 +79,7 @@ class AppPasswordField extends StatefulWidget {
     this.autofocus = false,
     this.enabled = true,
     this.prefixIcon = Icons.lock_outline_rounded,
+    this.inputFormatters,
   });
 
   final TextEditingController controller;
@@ -89,6 +91,7 @@ class AppPasswordField extends StatefulWidget {
   final bool autofocus;
   final bool enabled;
   final IconData prefixIcon;
+  final List<TextInputFormatter>? inputFormatters;
 
   @override
   State<AppPasswordField> createState() => _AppPasswordFieldState();
@@ -109,6 +112,8 @@ class _AppPasswordFieldState extends State<AppPasswordField> {
       autofillHints: widget.autofillHints,
       textInputAction: widget.textInputAction,
       onFieldSubmitted: widget.onFieldSubmitted,
+      inputFormatters: widget.inputFormatters ??
+          [LengthLimitingTextInputFormatter(128)],
       decoration: InputDecoration(
         labelText: widget.label,
         prefixIcon: Icon(widget.prefixIcon),

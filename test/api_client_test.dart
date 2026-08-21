@@ -106,4 +106,39 @@ void main() {
     expect(captured.headers['content-type'], 'application/json');
     expect(jsonDecode(captured.body), {'current_password': 'secret'});
   });
+
+  test('multipart upload sends idea text and optional image together',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      baseUrl: 'https://api.example.test/api',
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {
+              'suggestion': {'id': 41}
+            },
+          }),
+          201,
+        );
+      }),
+    );
+    addTearDown(client.dispose);
+
+    await client.uploadMultipart(
+      '/customer/meal-suggestion',
+      fields: {'suggestion_text': 'New seasonal meal idea'},
+      bytes: const [0x89, 0x50, 0x4E, 0x47],
+      filename: 'idea.png',
+    );
+
+    final body = utf8.decode(captured.bodyBytes, allowMalformed: true);
+    expect(captured.method, 'POST');
+    expect(captured.headers['content-type'], contains('multipart/form-data'));
+    expect(body, contains('suggestion_text'));
+    expect(body, contains('New seasonal meal idea'));
+    expect(body, contains('filename="idea.png"'));
+  });
 }

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../app_state.dart';
+import '../core/input_validation.dart';
+import '../core/reservation_time.dart';
 import '../models.dart';
 import '../router.dart';
 import '../theme.dart';
@@ -20,22 +22,32 @@ class ReservationScreen extends StatefulWidget {
 
 class _ReservationScreenState extends State<ReservationScreen> {
   int? _table;
-  int _hour = 8;
-  int _minute = 0;
-  DayPeriod _period = DayPeriod.pm;
+  late int _hour;
+  late int _minute;
+  late DayPeriod _period;
   int _seats = 2;
   final _notes = TextEditingController();
   bool _checking = false;
   bool _loadingTables = false;
   bool _catalogRequested = false;
   String? _tableError;
+  int _refreshRequestId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = defaultReservationTime();
+    _hour = initial.hour % 12 == 0 ? 12 : initial.hour % 12;
+    _minute = initial.minute;
+    _period = initial.hour >= 12 ? DayPeriod.pm : DayPeriod.am;
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_catalogRequested) return;
     _catalogRequested = true;
-    _refreshTables(_dateTime);
+    _refreshTables(isReservationTimeBookable(_dateTime) ? _dateTime : null);
   }
 
   @override
@@ -45,33 +57,34 @@ class _ReservationScreenState extends State<ReservationScreen> {
   }
 
   DateTime get _dateTime {
-    final now = DateTime.now();
-    final hour24 = _period == DayPeriod.am
-        ? (_hour == 12 ? 0 : _hour)
-        : (_hour == 12 ? 12 : _hour + 12);
-    var value = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      hour24,
-      _minute,
+    return reservationDateTimeForToday(
+      hour12: _hour,
+      minute: _minute,
+      isPm: _period == DayPeriod.pm,
     );
-    if (!value.isAfter(now)) value = value.add(const Duration(days: 1));
-    return value;
   }
 
   void _updateTime({int? hour, int? minute, DayPeriod? period}) {
+    AppStateScope.of(context).clearConfirmedReservation();
     setState(() {
       _hour = hour ?? _hour;
       _minute = minute ?? _minute;
       _period = period ?? _period;
       _table = null;
+      _tableError = null;
     });
-    unawaited(_refreshTables(_dateTime));
+    final value = _dateTime;
+    if (!isReservationTimeBookable(value)) {
+      _refreshRequestId++;
+      if (_loadingTables) setState(() => _loadingTables = false);
+      return;
+    }
+    unawaited(_refreshTables(value));
   }
 
   Future<List<ReservationTable>> _refreshTables(
       [DateTime? reservationTime]) async {
+    final requestId = ++_refreshRequestId;
     if (mounted) {
       setState(() {
         _loadingTables = true;
@@ -82,6 +95,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
       final tables = await AppStateScope.of(context).loadReservationTables(
         reservationTime: reservationTime,
       );
+      if (requestId != _refreshRequestId) return const [];
       if (_table != null &&
           tables
                   .where((table) => table.number == _table)
@@ -92,40 +106,70 @@ class _ReservationScreenState extends State<ReservationScreen> {
       }
       return tables;
     } catch (error) {
-      if (mounted) {
+      if (mounted && requestId == _refreshRequestId) {
         setState(() => _tableError = error is ApiException
             ? error.message
             : 'تعذر تحميل الطاولات الآن.');
       }
       return const [];
     } finally {
-      if (mounted) setState(() => _loadingTables = false);
+      if (mounted && requestId == _refreshRequestId) {
+        setState(() => _loadingTables = false);
+      }
     }
   }
 
   Future<void> _confirm() async {
     final value = _dateTime;
+    final now = DateTime.now();
+    if (!isReservationTimeBookable(value, now: now)) {
+      showMessage(
+          context,
+          tr(context,
+              ar: 'اختر وقتًا لاحقًا من اليوم؛ الوقت المحدد مضى',
+              en: 'Choose a later time today; the selected time has passed'));
+      return;
+    }
     if (_table == null) {
       showMessage(context,
           tr(context, ar: 'اختر الطاولة أولًا', en: 'Choose a table first'));
       return;
     }
-    final now = DateTime.now();
-    if (!value.isAfter(now) ||
-        value.isAfter(now.add(const Duration(days: 1)))) {
+    if (!CustomerInputValidation.isSafeText(_notes.text, min: 2, max: 500)) {
       showMessage(
           context,
           tr(context,
-              ar: 'الحجز متاح خلال الساعات الـ 24 القادمة فقط',
-              en: 'Reservations are available only within the next 24 hours'));
+              ar: 'تحقق من صيغة ملاحظات الحجز',
+              en: 'Check the reservation notes'));
       return;
     }
     setState(() => _checking = true);
     final state = AppStateScope.of(context);
+    final selectedTableNumber = _table!;
     try {
-      final tables = await _refreshTables(value);
-      final table = tables.where((item) => item.number == _table).firstOrNull;
-      if (table == null || table.isAvailable != true) {
+      if (!isReservationTimeBookable(value)) {
+        throw const ApiException('وقت الحجز المحدد مضى. اختر وقتًا لاحقًا.');
+      }
+      final table = state.reservationTables
+          .where((item) => item.number == selectedTableNumber)
+          .firstOrNull;
+      if (table == null) {
+        throw const ApiException('تعذر العثور على الطاولة المحددة.');
+      }
+      final available = await state.tableIsAvailable(
+        tableNumber: selectedTableNumber,
+        reservationTime: value,
+        durationMinutes: table.durationMinutes,
+      );
+      if (_dateTime != value || _table != selectedTableNumber) {
+        throw const ApiException(
+            'تغيرت بيانات الحجز أثناء التحقق. تحقق منها مرة أخرى.');
+      }
+      if (!isReservationTimeBookable(value)) {
+        throw const ApiException('وقت الحجز المحدد مضى. اختر وقتًا لاحقًا.');
+      }
+      if (!available) {
+        unawaited(_refreshTables(value));
         throw const ApiException(
             'الطاولة محجوزة في هذا الموعد. اختر وقتًا أو طاولة أخرى.');
       }
@@ -160,6 +204,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     final tables = state.reservationTables;
     final selectedTable =
         tables.where((table) => table.number == _table).firstOrNull;
+    final timeIsBookable = isReservationTimeBookable(_dateTime);
     return TazaShell(
       titleAr: 'حجز طاولة',
       titleEn: 'Table reservation',
@@ -212,7 +257,8 @@ class _ReservationScreenState extends State<ReservationScreen> {
                 itemBuilder: (context, index) {
                   final table = tables[index];
                   final selected = _table == table.number;
-                  final unavailable = table.isAvailable == false;
+                  final unavailable =
+                      !timeIsBookable || table.isAvailable == false;
                   final color = unavailable
                       ? TazaColors.danger
                       : table.isVip
@@ -224,12 +270,15 @@ class _ReservationScreenState extends State<ReservationScreen> {
                       borderRadius: BorderRadius.circular(22),
                       onTap: unavailable
                           ? null
-                          : () => setState(() {
+                          : () {
+                              state.clearConfirmedReservation();
+                              setState(() {
                                 _table = table.number;
                                 if (_seats > table.maxSeats) {
                                   _seats = table.maxSeats;
                                 }
-                              }),
+                              });
+                            },
                       child: Ink(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -268,17 +317,21 @@ class _ReservationScreenState extends State<ReservationScreen> {
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w900)),
                             Text(
-                              table.isAvailable == null
+                              !timeIsBookable
                                   ? tr(context,
-                                      ar: 'حدد الوقت لعرض التوفر',
-                                      en: 'Select time for availability')
-                                  : unavailable
+                                      ar: 'الوقت المحدد مضى',
+                                      en: 'Selected time has passed')
+                                  : table.isAvailable == null
                                       ? tr(context,
-                                          ar: 'محجوزة في هذا الوقت',
-                                          en: 'Reserved at this time')
-                                      : tr(context,
-                                          ar: 'متاحة في هذا الوقت',
-                                          en: 'Available at this time'),
+                                          ar: 'حدد الوقت لعرض التوفر',
+                                          en: 'Select time for availability')
+                                      : unavailable
+                                          ? tr(context,
+                                              ar: 'محجوزة في هذا الوقت',
+                                              en: 'Reserved at this time')
+                                          : tr(context,
+                                              ar: 'متاحة في هذا الوقت',
+                                              en: 'Available at this time'),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -375,7 +428,10 @@ class _ReservationScreenState extends State<ReservationScreen> {
                             child: Text('$value'),
                           ))
                       .toList(),
-                  onChanged: (value) => setState(() => _seats = value ?? 2),
+                  onChanged: (value) {
+                    state.clearConfirmedReservation();
+                    setState(() => _seats = value ?? 2);
+                  },
                 ),
                 const SizedBox(height: 12),
                 AnimatedSwitcher(
@@ -392,14 +448,15 @@ class _ReservationScreenState extends State<ReservationScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(tr(context,
-                          ar: 'مدة الحجز المعتمدة 60 دقيقة، والحجز متاح ضمن 24 ساعة.',
-                          en: 'The reservation duration is 60 minutes and booking is available within 24 hours.')),
+                          ar: 'مدة الحجز 60 دقيقة. اختر وقتًا لاحقًا من اليوم؛ الأوقات الماضية غير متاحة.',
+                          en: 'Reservations last 60 minutes. Choose a later time today; past times are unavailable.')),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _notes,
+                  onChanged: (_) => state.clearConfirmedReservation(),
                   maxLength: 500,
                   minLines: 2,
                   maxLines: 4,

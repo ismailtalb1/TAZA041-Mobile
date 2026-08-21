@@ -55,7 +55,10 @@ class AppRouter {
       case AppRoutes.orders:
         page = const OrdersHistoryScreen();
       case AppRoutes.aiSuggestion:
-        page = const AiSuggestionScreen();
+        final args = settings.arguments is MealConversationRouteArgs
+            ? settings.arguments as MealConversationRouteArgs
+            : const MealConversationRouteArgs();
+        page = MealConversationsScreen(args: args);
       case AppRoutes.about:
         page = const AboutScreen();
       default:

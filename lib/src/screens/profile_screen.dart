@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../api_client.dart';
 import '../core/app_constants.dart';
+import '../core/input_validation.dart';
 import '../models.dart';
 import '../router.dart';
 import '../services/profile_image_service.dart';
@@ -105,7 +106,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     final user = AppStateScope.of(context).currentUser;
     _name.text = user.fullName;
     _email.text = user.email;
-    _phone.text = user.phone;
+    _phone.text = CustomerInputValidation.formatPhone(user.phone);
     _address.text = user.city;
     _bio.text = user.bio;
     _birthday = user.birthDate;
@@ -287,14 +288,18 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   TextFormField(
                     controller: _name,
                     enabled: _editing,
+                    inputFormatters: CustomerInputValidation.limited(100),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.person_outline),
                       labelText:
                           tr(context, ar: 'الاسم الكامل', en: 'Full name'),
                     ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? tr(context, ar: 'الاسم مطلوب', en: 'Name is required')
-                        : null,
+                    validator: (value) =>
+                        !CustomerInputValidation.isFullName(value)
+                            ? tr(context,
+                                ar: 'اكتب اسماً صحيحاً من الأحرف فقط',
+                                en: 'Enter a valid name using letters only')
+                            : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -312,11 +317,23 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   TextFormField(
                     controller: _phone,
                     enabled: _editing,
-                    keyboardType: TextInputType.phone,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: CustomerInputValidation.phoneFormatters,
+                    autovalidateMode: AutovalidateMode.onUserInteraction,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.phone_android),
                       labelText: tr(context, ar: 'رقم الهاتف', en: 'Phone'),
+                      hintText: '09 12 345 678',
                     ),
+                    validator: (value) {
+                      final text = value?.trim() ?? '';
+                      return text.isNotEmpty &&
+                              !CustomerInputValidation.isPhone(text)
+                          ? tr(context,
+                              ar: 'الرقم 10 أرقام ويجب أن يبدأ بـ 09',
+                              en: 'Phone must be 10 digits and start with 09')
+                          : null;
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -327,6 +344,13 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       prefixIcon: const Icon(Icons.location_on_outlined),
                       labelText: tr(context, ar: 'العنوان', en: 'Address'),
                     ),
+                    validator: (value) =>
+                        !CustomerInputValidation.isSafeText(value,
+                                min: 3, max: 500)
+                            ? tr(context,
+                                ar: 'تحقق من صيغة العنوان',
+                                en: 'Check the address format')
+                            : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -334,11 +358,18 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     enabled: _editing,
                     minLines: 3,
                     maxLines: 5,
-                    maxLength: 1000,
+                    maxLength: 500,
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.notes_rounded),
                       labelText: tr(context, ar: 'نبذة شخصية', en: 'About me'),
                     ),
+                    validator: (value) =>
+                        !CustomerInputValidation.isSafeText(value,
+                                min: 2, max: 500)
+                            ? tr(context,
+                                ar: 'تحقق من صيغة النبذة',
+                                en: 'Check the bio format')
+                            : null,
                   ),
                   const SizedBox(height: 4),
                   SizedBox(
@@ -367,11 +398,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       prefixIcon: Icons.password_outlined,
                       label: tr(context,
                           ar: 'كلمة المرور الجديدة', en: 'New password'),
-                      validator: (value) =>
-                          value != null && value.isNotEmpty && value.length < 6
+                      validator: (value) => value != null &&
+                              value.isNotEmpty &&
+                              !CustomerInputValidation.isStrongPassword(value)
                               ? tr(context,
-                                  ar: 'كلمة المرور 6 أحرف على الأقل',
-                                  en: 'Use at least 6 characters')
+                                  ar: 'استخدم 8 أحرف على الأقل تتضمن حروفاً وأرقاماً',
+                                  en: 'Use at least 8 characters with letters and numbers')
                               : null,
                     ),
                     const SizedBox(height: 12),
@@ -974,11 +1006,21 @@ class _SavedAddressEditorState extends State<_SavedAddressEditor> {
 
   Future<void> _save() async {
     final value = _address.text.trim();
-    if (value.isEmpty) {
+    if (!CustomerInputValidation.isSafeText(value,
+        required: true, min: 3, max: 500)) {
       showMessage(
           context,
           tr(context,
-              ar: 'اكتب وصف العنوان أولاً', en: 'Enter an address first'));
+              ar: 'اكتب وصف عنوان صحيحاً', en: 'Enter a valid address'));
+      return;
+    }
+    if (!CustomerInputValidation.isSafeText(_details.text,
+        min: 2, max: 500)) {
+      showMessage(
+          context,
+          tr(context,
+              ar: 'تحقق من صيغة تفاصيل العنوان',
+              en: 'Check the address details'));
       return;
     }
     if (_selected == null) {

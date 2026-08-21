@@ -1,6 +1,7 @@
 export 'screens/auth_screens.dart';
 export 'screens/home_screens.dart';
 export 'screens/ai_screen.dart';
+export 'screens/meal_conversations_screen.dart';
 export 'screens/delivery_screen.dart';
 export 'screens/menu_screen.dart';
 export 'screens/notifications_screen.dart';

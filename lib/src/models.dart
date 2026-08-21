@@ -20,6 +20,8 @@ enum CatalogItemType { product, offer }
 
 enum PaymentMethod { cash, syriatelCash, shamCash, loyaltyPoints }
 
+enum MealSuggestionStatus { pending, reviewed, implemented, rejected }
+
 double _number(dynamic value, [double fallback = 0]) =>
     value is num ? value.toDouble() : double.tryParse('$value') ?? fallback;
 
@@ -166,6 +168,9 @@ class NotificationItem {
 
   factory NotificationItem.fromJson(Map<String, dynamic> json) {
     final type = '${json['type']}';
+    final data = json['data'] is Map
+        ? Map<String, dynamic>.from(json['data'] as Map)
+        : const <String, dynamic>{};
     return NotificationItem(
       id: '${json['id']}',
       titleAr: (json['title'] ?? 'إشعار').toString(),
@@ -174,11 +179,9 @@ class NotificationItem {
       messageEn: (json['message_en'] ?? json['message'] ?? '').toString(),
       timeLabelAr: (json['created_at_human'] ?? '').toString(),
       timeLabelEn: (json['created_at_human'] ?? '').toString(),
-      icon: _notificationIcon(type),
+      icon: _notificationIcon(type, data),
       type: type,
-      data: json['data'] is Map
-          ? Map<String, dynamic>.from(json['data'] as Map)
-          : const {},
+      data: data,
       isRead: _boolean(json['is_read']),
     );
   }
@@ -201,21 +204,64 @@ class NotificationItem {
       type.contains('reservation') ||
       type.contains('payment');
   bool get isCatalogUpdate =>
-      type.contains('offer') ||
-      type.contains('meal') ||
-      type.contains('product');
+      !isMealSuggestionUpdate &&
+      (type.contains('offer') ||
+          type.contains('meal') ||
+          type.contains('product'));
+  bool get isMealSuggestionUpdate => data['suggestion_id'] != null;
   String? get linkedOrderId =>
       (data['order_id'] ?? data['delivery_order_id'])?.toString();
   String? get linkedCatalogId =>
       (data['offer_id'] ?? data['product_id'])?.toString();
+  String? get linkedSuggestionId => data['suggestion_id']?.toString();
 }
 
-IconData _notificationIcon(String type) {
+IconData _notificationIcon(String type,
+    [Map<String, dynamic> data = const {}]) {
+  if (data['suggestion_id'] != null) return Icons.lightbulb_outline_rounded;
   if (type.contains('payment')) return Icons.payments_outlined;
   if (type.contains('offer')) return Icons.local_offer_outlined;
   if (type.contains('delivery')) return Icons.delivery_dining_outlined;
   if (type.contains('order')) return Icons.receipt_long_outlined;
   return Icons.notifications_none_rounded;
+}
+
+class MealSuggestion {
+  const MealSuggestion({
+    required this.id,
+    required this.text,
+    required this.status,
+    required this.statusLabel,
+    required this.createdAt,
+    required this.updatedAt,
+    this.imageUrl = '',
+    this.adminNote = '',
+  });
+
+  factory MealSuggestion.fromJson(Map<String, dynamic> json) => MealSuggestion(
+        id: '${json['id']}',
+        text: (json['suggestion_text'] ?? '').toString(),
+        imageUrl: ApiConfig.assetUrl(json['image_url']?.toString()),
+        status: switch ('${json['status']}') {
+          'reviewed' => MealSuggestionStatus.reviewed,
+          'implemented' => MealSuggestionStatus.implemented,
+          'rejected' => MealSuggestionStatus.rejected,
+          _ => MealSuggestionStatus.pending,
+        },
+        statusLabel: (json['status_label'] ?? json['status'] ?? '').toString(),
+        adminNote: (json['admin_note'] ?? '').toString(),
+        createdAt: (json['created_at'] ?? '').toString(),
+        updatedAt: (json['updated_at'] ?? json['created_at'] ?? '').toString(),
+      );
+
+  final String id;
+  final String text;
+  final String imageUrl;
+  final MealSuggestionStatus status;
+  final String statusLabel;
+  final String adminNote;
+  final String createdAt;
+  final String updatedAt;
 }
 
 class DriverProfile {
@@ -704,6 +750,7 @@ class RestaurantProfile {
     this.latitude,
     this.longitude,
     this.todayHours = const {},
+    this.workingHours = const {},
     this.websiteContent = const {},
   });
 
@@ -723,6 +770,9 @@ class RestaurantProfile {
         todayHours: json['today_hours'] is Map
             ? Map<String, dynamic>.from(json['today_hours'] as Map)
             : const {},
+        workingHours: json['working_hours'] is Map
+            ? Map<String, dynamic>.from(json['working_hours'] as Map)
+            : const {},
         websiteContent: json['website_content'] is Map
             ? Map<String, dynamic>.from(json['website_content'] as Map)
             : const {},
@@ -739,6 +789,7 @@ class RestaurantProfile {
   final double? latitude;
   final double? longitude;
   final Map<String, dynamic> todayHours;
+  final Map<String, dynamic> workingHours;
   final Map<String, dynamic> websiteContent;
 
   String todayHoursLabel({required String closedLabel}) {
@@ -754,6 +805,13 @@ class RestaurantProfile {
     final value = websiteContent[key]?.toString().trim() ?? '';
     return value.isEmpty ? fallback : value;
   }
+
+  Map<String, dynamic> hoursFor(String day) {
+    final value = workingHours[day];
+    return value is Map
+        ? Map<String, dynamic>.from(value)
+        : const <String, dynamic>{};
+  }
 }
 
 class MenuRouteArgs {
@@ -761,4 +819,14 @@ class MenuRouteArgs {
 
   final OrderType orderType;
   final String? highlightProductId;
+}
+
+class MealConversationRouteArgs {
+  const MealConversationRouteArgs({
+    this.openIdeas = false,
+    this.suggestionId,
+  });
+
+  final bool openIdeas;
+  final String? suggestionId;
 }

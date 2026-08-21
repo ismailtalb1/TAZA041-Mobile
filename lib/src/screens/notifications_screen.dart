@@ -6,7 +6,7 @@ import '../theme.dart';
 import '../widgets.dart';
 import 'screen_common.dart';
 
-enum _NotificationFilter { all, unread, orders, catalog }
+enum _NotificationFilter { all, unread, orders, catalog, ideas }
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -27,6 +27,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               _NotificationFilter.unread => !item.isRead,
               _NotificationFilter.orders => item.isOrderUpdate,
               _NotificationFilter.catalog => item.isCatalogUpdate,
+              _NotificationFilter.ideas => item.isMealSuggestionUpdate,
             })
         .toList(growable: false);
 
@@ -105,6 +106,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _NotificationFilter.orders => tr(context, ar: 'الطلبات', en: 'Orders'),
         _NotificationFilter.catalog =>
           tr(context, ar: 'العروض والمنيو', en: 'Offers & menu'),
+        _NotificationFilter.ideas =>
+          tr(context, ar: 'أفكار الوجبات', en: 'Meal ideas'),
       };
 
   Future<void> _openNotification(
@@ -115,6 +118,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       if (!context.mounted) return;
       if (item.isOrderUpdate || item.linkedOrderId != null) {
         await Navigator.pushNamed(context, AppRoutes.orders);
+      } else if (item.isMealSuggestionUpdate ||
+          item.linkedSuggestionId != null) {
+        await Navigator.pushNamed(
+          context,
+          AppRoutes.aiSuggestion,
+          arguments: MealConversationRouteArgs(
+            openIdeas: true,
+            suggestionId: item.linkedSuggestionId,
+          ),
+        );
       } else if (item.isCatalogUpdate || item.linkedCatalogId != null) {
         await Navigator.pushNamed(
           context,
@@ -179,7 +192,9 @@ class _NotificationCard extends StatelessWidget {
                       child: Text(notificationTime(context, item),
                           style: Theme.of(context).textTheme.bodySmall),
                     ),
-                    if (item.isOrderUpdate || item.isCatalogUpdate)
+                    if (item.isOrderUpdate ||
+                        item.isCatalogUpdate ||
+                        item.isMealSuggestionUpdate)
                       const Icon(Icons.arrow_forward_ios_rounded, size: 14),
                   ],
                 ),

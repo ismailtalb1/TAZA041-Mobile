@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../api_client.dart';
 import '../core/app_constants.dart';
+import '../core/input_validation.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../router.dart';
@@ -91,7 +92,9 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
 
   Future<void> _confirm() async {
     final point = _selected;
-    if (point == null || _address.text.trim().isEmpty) {
+    if (point == null ||
+        !CustomerInputValidation.isSafeText(_address.text,
+            required: true, min: 3, max: 500)) {
       showMessage(
           context,
           tr(context,

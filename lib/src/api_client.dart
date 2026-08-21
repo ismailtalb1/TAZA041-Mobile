@@ -90,22 +90,31 @@ class ApiClient {
   final String _baseUrl;
   final Map<String, Future<dynamic>> _inFlightGets = {};
   String? _token;
+  int _tokenRevision = 0;
 
   String? get token => _token;
   bool get hasToken => _token != null && _token!.isNotEmpty;
 
   Future<void> restoreToken() async {
     _token = await _storage.read(key: _tokenKey);
+    _tokenRevision++;
   }
 
   Future<void> saveToken(String value) async {
+    _tokenRevision++;
     _token = value;
     await _storage.write(key: _tokenKey, value: value);
   }
 
-  Future<void> clearToken() async {
+  Future<bool> clearToken({String? expectedToken}) async {
+    if (expectedToken != null && _token != expectedToken) return false;
+    final revision = ++_tokenRevision;
     _token = null;
     await _storage.delete(key: _tokenKey);
+    if (revision != _tokenRevision && _token != null) {
+      await _storage.write(key: _tokenKey, value: _token!);
+    }
+    return true;
   }
 
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) {
@@ -204,6 +213,24 @@ class ApiClient {
     required List<int> bytes,
     required String filename,
     String? currentPassword,
+  }) =>
+      uploadMultipart(
+        path,
+        fields: {
+          if (currentPassword?.isNotEmpty ?? false)
+            'current_password': currentPassword!,
+        },
+        bytes: bytes,
+        filename: filename,
+      );
+
+  Future<dynamic> uploadMultipart(
+    String path, {
+    Map<String, String> fields = const {},
+    List<int>? bytes,
+    String? filename,
+    String fileField = 'image',
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -211,14 +238,14 @@ class ApiClient {
     );
     request.headers['Accept'] = 'application/json';
     if (hasToken) request.headers['Authorization'] = 'Bearer $_token';
-    if (currentPassword?.isNotEmpty ?? false) {
-      request.fields['current_password'] = currentPassword!;
+    request.fields.addAll(fields);
+    if (bytes != null && filename != null && filename.isNotEmpty) {
+      request.files.add(
+        http.MultipartFile.fromBytes(fileField, bytes, filename: filename),
+      );
     }
-    request.files
-        .add(http.MultipartFile.fromBytes('image', bytes, filename: filename));
     try {
-      final streamed =
-          await _http.send(request).timeout(const Duration(seconds: 30));
+      final streamed = await _http.send(request).timeout(timeout);
       return _decode(await http.Response.fromStream(streamed));
     } on TimeoutException {
       throw const ApiException(

@@ -19,7 +19,7 @@ void main() {
     expect(table.isAvailable, isFalse);
   });
 
-  test('delivery order parses every unified customer status step', () {
+  test('delivery order parses the collapsed customer delivery status', () {
     final order = OrderRecord.fromJson({
       'id': 41,
       'type': 'delivery',
@@ -27,12 +27,12 @@ void main() {
       'items': [],
       'total_price': 100,
       'final_price': 120,
-      'delivery': {'status': 'picked_up'},
+      'delivery': {'status': 'in_delivery'},
       'customer_status': {
-        'key': 'picked_up',
-        'label_ar': 'استلم السائق الطلب',
-        'label_en': 'Picked up by driver',
-        'current_index': 6,
+        'key': 'in_delivery',
+        'label_ar': 'في الطريق مع السائق',
+        'label_en': 'On the way',
+        'current_index': 5,
         'is_cancelled': false,
         'steps': [
           {'key': 'pending', 'label_ar': 'معلق', 'label_en': 'Pending'},
@@ -44,11 +44,9 @@ void main() {
             'label_ar': 'انتظار',
             'label_en': 'Awaiting driver'
           },
-          {'key': 'assigned', 'label_ar': 'السائق', 'label_en': 'Assigned'},
-          {'key': 'picked_up', 'label_ar': 'استلام', 'label_en': 'Picked up'},
           {
             'key': 'in_delivery',
-            'label_ar': 'الطريق',
+            'label_ar': 'في الطريق مع السائق',
             'label_en': 'On the way'
           },
           {'key': 'delivered', 'label_ar': 'تسليم', 'label_en': 'Delivered'},
@@ -56,14 +54,14 @@ void main() {
       },
     });
 
-    expect(order.customerStatusKey, 'picked_up');
-    expect(order.customerStatusLabelEn, 'Picked up by driver');
-    expect(order.timelineSteps, hasLength(9));
-    expect(order.timelineIndex, 6);
+    expect(order.customerStatusKey, 'in_delivery');
+    expect(order.customerStatusLabelEn, 'On the way');
+    expect(order.timelineSteps, hasLength(7));
+    expect(order.timelineIndex, 5);
     expect(order.status, OrderStatus.inProgress);
   });
 
-  test('completed reservation exposes the table-ready terminal state', () {
+  test('completed reservation exposes the session-ended terminal state', () {
     final order = OrderRecord.fromJson({
       'id': 42,
       'type': 'reservation',
@@ -74,8 +72,8 @@ void main() {
       'reservation': {'status': 'completed', 'table_number': 5},
       'customer_status': {
         'key': 'reservation_completed',
-        'label_ar': 'الطاولة جاهزة',
-        'label_en': 'Table ready',
+        'label_ar': 'انتهت الجلسة',
+        'label_en': 'Session ended',
         'current_index': 5,
         'is_cancelled': false,
         'steps': [],

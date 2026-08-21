@@ -180,14 +180,16 @@ class HeroMessageCard extends StatelessWidget {
 }
 
 class OrderTypeActionCard extends StatelessWidget {
-  const OrderTypeActionCard(
-      {super.key,
-      required this.icon,
-      required this.titleAr,
-      required this.titleEn,
-      required this.bodyAr,
-      required this.bodyEn,
-      required this.onTap});
+  const OrderTypeActionCard({
+    super.key,
+    required this.icon,
+    required this.titleAr,
+    required this.titleEn,
+    required this.bodyAr,
+    required this.bodyEn,
+    required this.onTap,
+    this.accentColor = TazaColors.accent,
+  });
 
   final IconData icon;
   final String titleAr;
@@ -195,37 +197,60 @@ class OrderTypeActionCard extends StatelessWidget {
   final String bodyAr;
   final String bodyEn;
   final VoidCallback onTap;
+  final Color accentColor;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: (MediaQuery.sizeOf(context).width * .72).clamp(220.0, 280.0),
-      child: TazaCard(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-                radius: 24,
-                backgroundColor: TazaColors.accent.withValues(alpha: .18),
-                child: Icon(icon, color: TazaColors.accent)),
-            const SizedBox(height: 18),
-            Text(tr(context, ar: titleAr, en: titleEn),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text(
-              tr(context, ar: bodyAr, en: bodyEn),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: .65)),
+    return TazaCard(
+      onTap: onTap,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(18),
             ),
-          ],
-        ),
+            child: Icon(icon, color: accentColor, size: 27),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tr(context, ar: titleAr, en: titleEn),
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tr(context, ar: bodyAr, en: bodyEn),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        height: 1.45,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: .64),
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            Icons.arrow_forward_ios_rounded,
+            size: 17,
+            color: accentColor.withValues(alpha: .8),
+          ),
+        ],
       ),
     );
   }
@@ -525,7 +550,7 @@ class AboutPreviewCard extends StatelessWidget {
             imageUrl: _restaurantHeroUrl(state.restaurantImages),
             labelAr: 'عن المطعم',
             labelEn: 'About restaurant',
-            height: 160,
+            height: 132,
           ),
           const SizedBox(height: 14),
           Text(
@@ -557,7 +582,10 @@ class AboutPreviewCard extends StatelessWidget {
                     : 'A modern restaurant serving high-quality fast meals with delivery designed for students and city residents.',
               ),
             ),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                height: 1.55,
                 color: Theme.of(context)
                     .colorScheme
                     .onSurface
@@ -585,9 +613,12 @@ class AboutPreviewCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          OutlinedButton(
-            onPressed: () => Navigator.pushNamed(context, AppRoutes.about),
-            child: Text(tr(context, ar: 'اعرف المزيد', en: 'Learn more')),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () => Navigator.pushNamed(context, AppRoutes.about),
+              child: Text(tr(context, ar: 'اعرف المزيد', en: 'Learn more')),
+            ),
           ),
         ],
       ),

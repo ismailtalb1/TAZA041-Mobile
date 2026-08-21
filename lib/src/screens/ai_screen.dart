@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models.dart';
+import '../core/input_validation.dart';
 import '../router.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'screen_common.dart';
 
 class AiSuggestionScreen extends StatefulWidget {
   const AiSuggestionScreen({super.key});
@@ -58,6 +60,15 @@ class _AiSuggestionScreenState extends State<AiSuggestionScreen> {
   Future<void> _send([String? value]) async {
     final text = (value ?? _controller.text).trim();
     if (text.isEmpty || _sending) return;
+    if (!CustomerInputValidation.isSafeText(text,
+        required: true, min: 2, max: 1000)) {
+      showMessage(
+          context,
+          tr(context,
+              ar: 'اكتب طلباً واضحاً بين حرفين و1000 حرف',
+              en: 'Enter a clear request between 2 and 1000 characters'));
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() {
       _messages.add(_ChatMessage(textAr: text, textEn: text, fromUser: true));
@@ -169,8 +180,8 @@ class _AiSuggestionScreenState extends State<AiSuggestionScreen> {
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return TazaShell(
-      titleAr: 'مرشد الوجبة',
-      titleEn: 'Meal guide',
+      titleAr: 'محادثة النموذج الرقمي',
+      titleEn: 'Digital model chat',
       registered: state.isAuthenticated,
       showBack: true,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
@@ -494,6 +505,7 @@ class _Composer extends StatelessWidget {
         Expanded(
           child: TextField(
             controller: controller,
+            inputFormatters: CustomerInputValidation.limited(1000),
             minLines: 1,
             maxLines: 4,
             maxLength: 1000,
